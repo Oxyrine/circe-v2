@@ -127,13 +127,23 @@ def get_scored_rings_data(base_dir=None, limit=50):
     return load_json(os.path.join(root, "artifacts", "scored_rings.json"))
 
 
-@lru_cache(maxsize=1)
-def _base_rings():
-    """Scored rings for the bundled dataset. Computed once, no Exasol or artifacts needed."""
+def compute_all_rings():
+    """Score every candidate ring from data/*.json (slow: ~8 s). Used to build the cache file."""
     status, res = run_rescore([], limit=0)
     if status != 200:
         raise RuntimeError(res.get("error", "rescore failed"))
-    return tuple(res["rings"])
+    return res["rings"]
+
+
+@lru_cache(maxsize=1)
+def _base():
+    """(rings, total_count). Prefers pipeline/base_rings.json; recomputes if it is missing."""
+    path = os.path.join(ROOT_DIR, "pipeline", "base_rings.json")
+    if os.path.exists(path):
+        d = load_json(path)
+        return tuple(d["rings"]), d["total_candidate_count"]
+    rings = compute_all_rings()
+    return tuple(rings), len(rings)
 
 
 def get_rings():
@@ -141,11 +151,15 @@ def get_rings():
 
     Callers must never trust a ring object sent by the client; look it up here.
     """
-    return list(_base_rings())
+    return list(_base()[0])
+
+
+def get_total_ring_count():
+    return _base()[1]
 
 
 def get_ring(ring_id):
-    return next((r for r in _base_rings() if r.get("ring_id") == ring_id), None)
+    return next((r for r in _base()[0] if r.get("ring_id") == ring_id), None)
 
 
 def run_rescore(investigator_invoices, base_dir=None, max_depth=8, limit=50):

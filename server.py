@@ -26,7 +26,7 @@ except ImportError:
 
 # Pipeline imports — centralized in pipeline.service
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline.service import run_rescore, get_ring
+from pipeline.http_common import SECURITY_HEADERS, handle_post, read_json_body, send_json
 
 # ---------------------------------------------------------------------------
 # Exasol audit-trail config — local dev only
@@ -79,20 +79,18 @@ class OuroborosHandler(http.server.SimpleHTTPRequestHandler):
         directory = os.path.dirname(os.path.abspath(__file__))
         super().__init__(*args, directory=directory, **kwargs)
 
-    def _send_json(self, status, data):
-        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
+    adds_security_headers = True  # end_headers() below covers static files and JSON alike
 
-    def do_OPTIONS(self):
+    def end_headers(self):
+        for k, v in SECURITY_HEADERS.items():
+            self.send_header(k, v)
+        super().end_headers()
+
+    def _send_json(self, status, data):
+        send_json(self, status, data)
+
+    def do_OPTIONS(self):  # same-origin only: no CORS grant
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
     def do_GET(self):
@@ -152,61 +150,19 @@ class OuroborosHandler(http.server.SimpleHTTPRequestHandler):
         if clean_path in ("/api/audit", "/audit"):
             self._handle_audit_post()
             return
-        if clean_path in ("/api/ai/narrative", "/ai/narrative"):
-            self._handle_ai_narrative_post()
-            return
-        if clean_path not in ("/api/rescore", "/rescore"):
-            self.send_error(404, "Not found")
-            return
-
-        # Parse body
-        length = int(self.headers.get("Content-Length", 0))
-        raw = self.rfile.read(length)
-        try:
-            body = json.loads(raw.decode("utf-8"))
-        except json.JSONDecodeError as e:
-            self._send_json(400, {"error": "Invalid JSON: " + str(e)})
-            return
-
-        investigator_invoices = body.get("investigator_invoices", [])
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        status, response = run_rescore(investigator_invoices, base_dir=base_dir)
-        self._send_json(status, response)
-
-    def _handle_ai_narrative_post(self):
-        length = int(self.headers.get("Content-Length", 0))
-        raw = self.rfile.read(length)
-        try:
-            body = json.loads(raw.decode("utf-8") if raw else "{}")
-        except json.JSONDecodeError as e:
-            self._send_json(400, {"error": "Invalid JSON: " + str(e)})
-            return
-
-        # Never trust a ring object from the client: look it up server-side.
-        ring_id = body.get("ring_id")
-        if not isinstance(ring_id, str) or not _RING_ID_RE.match(ring_id):
-            self._send_json(400, {"error": "ring_id is required"})
-            return
-        ring = get_ring(ring_id)
-        if not ring:
-            self._send_json(404, {"error": "unknown ring_id"})
-            return
-
-        actor = "investigator"
-        from ai.provider import generate_narrative
-        res = generate_narrative(ring, actor=actor)
-        self._send_json(200, res)
+        # /rescore and /ai/narrative kept as legacy aliases
+        clean_path = {"/rescore": "/api/rescore", "/ai/narrative": "/api/ai/narrative"}.get(clean_path, clean_path)
+        if not handle_post(self, clean_path):
+            self._send_json(404, {"error": "not found"})
 
     def _handle_audit_post(self):
         if not _HAS_EXASOL:
             self._send_json(503, {"error": "pyexasol not installed locally — see exasol/README.md", "available": False})
             return
 
-        length = int(self.headers.get("Content-Length", 0))
-        try:
-            body = json.loads(self.rfile.read(length) or b"{}")
-        except json.JSONDecodeError:
-            self._send_json(400, {"error": "invalid JSON body"})
+        body, err = read_json_body(self)
+        if err:
+            self._send_json(*err)
             return
 
         ring_id = body.get("ring_id", "")
@@ -270,6 +226,7 @@ if __name__ == '__main__':
             print(f"  Static:  http://localhost:{port}/demo/", flush=True)
             print(f"  Health:  http://localhost:{port}/api/health", flush=True)
             print(f"  Rescore: POST http://localhost:{port}/api/rescore", flush=True)
+            print(f"  Assist:  POST /api/prioritise, /api/assistant, /api/ai/narrative", flush=True)
             print(f"  Audit:   GET/POST http://localhost:{port}/api/audit  (local-only, needs Exasol — see exasol/README.md)", flush=True)
             httpd.serve_forever()
     except Exception:
@@ -279,6 +236,7 @@ if __name__ == '__main__':
             print(f"  Static:  http://localhost:{port}/demo/", flush=True)
             print(f"  Health:  http://localhost:{port}/api/health", flush=True)
             print(f"  Rescore: POST http://localhost:{port}/api/rescore", flush=True)
+            print(f"  Assist:  POST /api/prioritise, /api/assistant, /api/ai/narrative", flush=True)
             print(f"  Audit:   GET/POST http://localhost:{port}/api/audit  (local-only, needs Exasol — see exasol/README.md)", flush=True)
             httpd.serve_forever()
 
