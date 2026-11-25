@@ -12,11 +12,12 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from exasol.connection import connect, is_exasol_available
+from scoring.scoring import FLAG_THRESHOLD
 
 
 def is_ai_available() -> bool:
     """Returns True if an LLM API key is present in environment."""
-    return bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY"))
+    return bool(os.environ.get("GEMINI_API_KEY"))
 
 
 def build_fallback_narrative(ring: dict) -> str:
@@ -31,7 +32,7 @@ def build_fallback_narrative(ring: dict) -> str:
 
     lines = [
         f"INVESTIGATION MEMORANDUM // RING ID: {ring_id}",
-        f"Classification: {'SUSPECTED FRAUDULENT CIRCULAR TRADING' if agg >= 0.70 else 'CLEARED / BENIGN LOOP'}",
+        f"Classification: {'SUSPECTED FRAUDULENT CIRCULAR TRADING' if agg >= FLAG_THRESHOLD else 'CLEARED / BENIGN LOOP'}",
         f"Aggregate Risk Score: {agg:.2f} | At-Risk Exposure: INR {exp_loss:,}",
         f"Closure Mechanism: {closure_type.upper()}-CLOSED LOOP",
         "",
@@ -67,29 +68,28 @@ def build_fallback_narrative(ring: dict) -> str:
     return "\n".join(lines)
 
 
-def call_gemini_api(prompt: str, api_key: str) -> str:
-    """Calls Gemini REST API using stdlib urllib to preserve zero-dependency invariant."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+
+
+def call_gemini_api(prompt: str, api_key: str, system: str = "") -> str:
+    """Calls Gemini REST API using stdlib urllib to preserve zero-dependency invariant.
+
+    The key travels in a header (never the URL, so it cannot leak through an
+    exception message). Model is overridable with GEMINI_MODEL.
+    """
+    model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": prompt
-                    }
-                ]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.2,
-            "maxOutputTokens": 600
-        }
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 600},
     }
+    if system:
+        payload["systemInstruction"] = {"parts": [{"text": system}]}
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST"
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
@@ -163,7 +163,6 @@ def generate_narrative(ring: dict, actor="investigator") -> dict:
         "Do NOT invent facts; ground every statement in the provided scores, evidence, and closure mechanism."
     )
     user_prompt = (
-        f"{system_prompt}\n\n"
         f"RING METRICS:\n"
         f"- Ring ID: {ring_id}\n"
         f"- Closure Type: {closure_type}\n"
@@ -176,7 +175,7 @@ def generate_narrative(ring: dict, actor="investigator") -> dict:
     )
 
     try:
-        narrative = call_gemini_api(user_prompt, api_key)
+        narrative = call_gemini_api(user_prompt, api_key, system=system_prompt)
         if not narrative:
             narrative = build_fallback_narrative(ring)
         log_ai_action_to_exasol(ring_id, narrative, agg, closure_type, actor=actor)
@@ -188,12 +187,14 @@ def generate_narrative(ring: dict, actor="investigator") -> dict:
             "governance_note": "Generated via LLM evidence synthesis. Model decides, LLM explains.",
         }
     except Exception as e:
+        # Log server-side only; the message can carry request details.
+        print(f"generate_narrative: LLM call failed ({type(e).__name__})")
         fallback = build_fallback_narrative(ring)
         return {
             "ring_id": ring_id,
             "status": "llm_error_fallback",
             "ai_available": False,
-            "error": str(e),
+            "error": "llm_unavailable",
             "narrative": fallback,
             "governance_note": "Generated via deterministic evidence engine fallback.",
         }

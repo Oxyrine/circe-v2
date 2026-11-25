@@ -26,7 +26,7 @@ except ImportError:
 
 # Pipeline imports — centralized in pipeline.service
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline.service import run_rescore, get_scored_rings_data
+from pipeline.service import run_rescore, get_ring
 
 # ---------------------------------------------------------------------------
 # Exasol audit-trail config — local dev only
@@ -182,21 +182,17 @@ class OuroborosHandler(http.server.SimpleHTTPRequestHandler):
             self._send_json(400, {"error": "Invalid JSON: " + str(e)})
             return
 
-        ring = body.get("ring", {})
+        # Never trust a ring object from the client: look it up server-side.
+        ring_id = body.get("ring_id")
+        if not isinstance(ring_id, str) or not _RING_ID_RE.match(ring_id):
+            self._send_json(400, {"error": "ring_id is required"})
+            return
+        ring = get_ring(ring_id)
         if not ring:
-            ring_id = body.get("ring_id")
-            if ring_id:
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-                scored_data = get_scored_rings_data(base_dir=base_dir)
-                for r in scored_data.get("rings", []):
-                    if r.get("ring_id") == ring_id:
-                        ring = r
-                        break
-        if not ring:
-            self._send_json(400, {"error": "ring or ring_id is required"})
+            self._send_json(404, {"error": "unknown ring_id"})
             return
 
-        actor = body.get("actor", "investigator")
+        actor = "investigator"
         from ai.provider import generate_narrative
         res = generate_narrative(ring, actor=actor)
         self._send_json(200, res)

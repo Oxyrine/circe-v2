@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 # Locate repository root
@@ -17,7 +18,7 @@ except ImportError:
     _HAS_SCHEMA = False
 
 from graph.run import find_candidate_rings
-from scoring.scoring import score_ring
+from scoring.scoring import FLAG_THRESHOLD, score_ring
 
 _SCHEMA_PATH = os.path.join(ROOT_DIR, "contract", "invoice.schema.json")
 _INVOICE_SCHEMA = None
@@ -126,6 +127,27 @@ def get_scored_rings_data(base_dir=None, limit=50):
     return load_json(os.path.join(root, "artifacts", "scored_rings.json"))
 
 
+@lru_cache(maxsize=1)
+def _base_rings():
+    """Scored rings for the bundled dataset. Computed once, no Exasol or artifacts needed."""
+    status, res = run_rescore([], limit=0)
+    if status != 200:
+        raise RuntimeError(res.get("error", "rescore failed"))
+    return tuple(res["rings"])
+
+
+def get_rings():
+    """Server-side source of truth for rings, keyed lookups and ranking.
+
+    Callers must never trust a ring object sent by the client; look it up here.
+    """
+    return list(_base_rings())
+
+
+def get_ring(ring_id):
+    return next((r for r in _base_rings() if r.get("ring_id") == ring_id), None)
+
+
 def run_rescore(investigator_invoices, base_dir=None, max_depth=8, limit=50):
     """Executes invoice validation, candidate ring discovery, and scoring.
 
@@ -172,7 +194,7 @@ def run_rescore(investigator_invoices, base_dir=None, max_depth=8, limit=50):
     except Exception as e:
         return 500, {"error": "Pipeline error: " + str(e)}
 
-    high_risk = [r for r in top if (r.get("aggregate") or 0) >= 0.70]
+    high_risk = [r for r in top if (r.get("aggregate") or 0) >= FLAG_THRESHOLD]
     response = {
         "rings": top,
         "total_candidate_count": len(candidate_rings),

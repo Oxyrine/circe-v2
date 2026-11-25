@@ -7,6 +7,10 @@ import os
 import statistics
 import sys
 
+# Aggregate score at or above which a ring counts as flagged. Single source of
+# truth for the server and the AI layer (the demo UI mirrors it in app.js).
+FLAG_THRESHOLD = 0.70
+
 PARAMS = {
     "tau_v": 0.15,
     "cv_ref": 0.60,
