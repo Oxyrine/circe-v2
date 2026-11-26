@@ -10,10 +10,6 @@
       "use": "@vercel/static"
     },
     {
-      "src": "console/**",
-      "use": "@vercel/static"
-    },
-    {
       "src": "index.html",
       "use": "@vercel/static"
     }
@@ -57,10 +53,6 @@
       "dest": "/demo/$1"
     },
     {
-      "src": "/console/(.*)",
-      "dest": "/console/$1"
-    },
-    {
       "src": "/styles.css",
       "dest": "/demo/styles.css"
     },
@@ -79,10 +71,6 @@
     {
       "src": "/demo",
       "dest": "/demo/index.html"
-    },
-    {
-      "src": "/console",
-      "dest": "/console/index.html"
     },
     {
       "src": "/",

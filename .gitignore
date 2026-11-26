@@ -23,3 +23,7 @@ artifacts/scored_rings.json
 .env
 .env.*
 !.env.example
+
+# kept locally, not published
+/plans/
+/console/

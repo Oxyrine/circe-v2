@@ -1,5 +1,6 @@
 server.py
 plans/
+console/
 graphify-out/
 .pytest_cache/
 __pycache__/
