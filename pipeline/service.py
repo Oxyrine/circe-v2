@@ -4,7 +4,6 @@ import json
 import os
 import sys
 from functools import lru_cache
-from pathlib import Path
 
 # Locate repository root
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

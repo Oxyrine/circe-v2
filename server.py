@@ -1,17 +1,9 @@
 import http.server
-import json
 import os
 import re
 import socket
 import sys
 from pathlib import Path
-
-# jsonschema is already in requirements.txt
-try:
-    import jsonschema
-    _HAS_SCHEMA = True
-except ImportError:
-    _HAS_SCHEMA = False
 
 # pyexasol is a LOCAL-ONLY, optional dependency — never added to requirements.txt.
 # /api/audit only works against a local Exasol Personal Local Starter Kit

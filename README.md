@@ -230,11 +230,10 @@ The fallback is Groq's `openai/gpt-oss-120b`. Override models with `GEMINI_MODEL
 
 ## 11. Testing
 
-169 tests. 168 run anywhere; the Exasol parity test needs a live database and **fails without one**.
+169 tests. 168 run anywhere; the Exasol parity test needs a live database and is skipped without one.
 
 ```bash
 python -m pytest -q
-python -m pytest -q --deselect exasol/tests/test_parity.py::test_exasol_parity_when_live
 ```
 
 | Area | Tests | Covers |
@@ -251,13 +250,15 @@ Provider tests replace the network calls with stubs. CI (`.github/workflows/ci.y
 ## 12. Accessibility
 
 - Ring cards are native buttons with `aria-expanded`.
+- Table rows, diagram nodes, timeline items and inline entity links work from the keyboard (Tab, then Enter or Space).
+- A skip link jumps to the main content, and keyboard focus has a visible outline.
 - New form controls have labels, and sector checkboxes are grouped in a `fieldset`.
 - `aria-live` regions announce queue updates, the rescore banner, memos and chat replies.
 - Dialogs have `role="dialog"` and `aria-modal`, trap Tab, close on Escape and return focus.
 - Reduced-motion preferences are handled in the stylesheet.
-- Text in the context panel and chat was checked for 4.5:1 contrast, and the one failing badge was fixed.
+- An automated browser check of the landing page and the four main views found no text below 4.5:1 contrast after fixes. It does not cover dialogs, expanded panels or SVG labels.
 
-**Not yet done:** testing with a screen reader or a full-site contrast audit. The context panel and ring cards fit a 375 px screen, but the top bar and navigation still overflow it.
+**Not yet done:** testing with a screen reader or with a standard accessibility audit tool. The context panel and ring cards fit a 375 px screen, but the top bar and navigation still overflow it.
 
 ## 13. Measured results
 

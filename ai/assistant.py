@@ -18,8 +18,7 @@ if ROOT_DIR not in sys.path:
 from ai import guard
 from ai.provider import call_llm
 from pipeline.prioritise import format_inr, prioritise, ring_sectors
-from pipeline.service import entities_map, get_ring, get_rings
-from scoring.scoring import FLAG_THRESHOLD
+from pipeline.service import entities_map, get_ring
 
 SIGNAL_LABELS = {
     "value": "Flow balance (little net value actually retained)",

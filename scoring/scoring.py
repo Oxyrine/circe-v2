@@ -5,7 +5,6 @@ import json
 import math
 import os
 import statistics
-import sys
 
 # Aggregate score at or above which a ring counts as flagged. Single source of
 # truth for the server and the AI layer (the demo UI mirrors it in app.js).

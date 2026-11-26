@@ -5,7 +5,6 @@ import time
 
 from graph.canonicalize import canonicalize
 from graph.corporate import (
-    MAX_STEPS_PER_PAIR,
     _paths_from_to,
     find_bridgeable_pairs,
     find_corporate_bridged_rings,

@@ -1195,8 +1195,10 @@ body {
   margin-top: 2px;
 }
 
+.zero-rings-row td, .zero-rings-row td * {
+  color: var(--paper-muted);
+}
 .zero-rings-row {
-  opacity: 0.55;
   transition: opacity var(--duration-fast) var(--ease-out);
 }
 
@@ -2059,3 +2061,8 @@ body {
   .ring-body { grid-template-columns: minmax(0, 1fr); }
   .trail-btn-wrap { flex-wrap: wrap; }
 }
+
+.skip-link { position: absolute; left: 8px; top: -48px; z-index: 2000; padding: 8px 12px; background: var(--ink-panel); color: var(--paper); border: 1px solid var(--seal); }
+.skip-link:focus { top: 8px; }
+[tabindex="0"]:focus-visible, .skip-link:focus-visible { outline: 2px solid var(--seal); outline-offset: 2px; }
+g.ring-node:focus-visible circle { stroke: var(--paper); stroke-width: 3px; }

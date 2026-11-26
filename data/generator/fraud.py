@@ -28,7 +28,6 @@ the legitimate economy that it's genuinely difficult to catch is a
 stronger adversarial-pass finding (spec §8.5) than hiding the difficulty.
 """
 
-import random
 from datetime import date, timedelta
 
 from data.generator import economy

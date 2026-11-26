@@ -17,6 +17,9 @@ def test_exasol_parity_when_live():
     if not is_exasol_available():
         pytest.skip("Local Exasol instance not running or pyexasol not installed.")
 
-    res = verify_parity()
+    try:
+        res = verify_parity()
+    except ConnectionError:  # credentials exist but the database is not running
+        pytest.skip("Local Exasol instance is not running.")
     assert res["status"] == "PARITY_PROVEN"
     assert res["mismatch_count"] == 0

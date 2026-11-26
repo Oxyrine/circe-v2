@@ -1855,6 +1855,40 @@ window.removeInvestigatorInvoice = function(id) {
     }
   };
 
+  // Keyboard access for the non-native click targets (table rows, diagram nodes, timeline
+  // items, inline ids). One delegated helper, so new renders are covered automatically.
+  var CLICK_TARGETS = ".ring-node, .clickable, .co-director-link, tr";
+  function makeKeyboardable(el) {
+    if (el.hasAttribute("tabindex") || /^(BUTTON|A|INPUT|SELECT|TEXTAREA|LABEL)$/.test(el.tagName)) return;
+    if (!el.onclick && !el.matches(".ring-node, .clickable, .co-director-link")) return;
+    el.setAttribute("tabindex", "0");
+    if (el.tagName !== "TR") el.setAttribute("role", "button"); // rows keep table semantics
+  }
+  function scanClickTargets(root) {
+    if (root.matches && root.matches(CLICK_TARGETS)) makeKeyboardable(root);
+    root.querySelectorAll(CLICK_TARGETS).forEach(makeKeyboardable);
+    root.querySelectorAll("div").forEach(function (d) { if (d.onclick) makeKeyboardable(d); });
+  }
+  new MutationObserver(function (changes) {
+    changes.forEach(function (c) {
+      c.addedNodes.forEach(function (n) { if (n.nodeType === 1) scanClickTargets(n); });
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+  scanClickTargets(document.body);
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var el = e.target;
+    if (el.getAttribute("tabindex") !== "0" || !(el.matches(CLICK_TARGETS) || el.onclick)) return;
+    e.preventDefault();
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true })); // SVG nodes have no .click()
+  });
+
+  var skip = document.getElementById("skip-link");
+  if (skip) skip.addEventListener("click", function (e) {
+    e.preventDefault(); // <base href> would turn "#main-content" into a page load
+    document.getElementById("main-content").focus();
+  });
+
   var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
   function openModal(id) {

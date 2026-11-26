@@ -2,7 +2,6 @@
 structure. Cycles (a firm buying, indirectly, from itself) are a side effect of
 the trade propensity table, not something placed by hand."""
 
-import random
 from datetime import date, timedelta
 
 INDUSTRY_CODES = {

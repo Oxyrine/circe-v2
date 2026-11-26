@@ -1,6 +1,6 @@
 """ai/tests/test_narrative.py: Unit tests for evidence-narrative generation."""
 
-from ai.provider import generate_narrative, is_ai_available, build_fallback_narrative
+from ai.provider import generate_narrative, build_fallback_narrative
 
 
 def test_narrative_deterministic_fallback():

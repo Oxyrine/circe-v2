@@ -10,7 +10,6 @@ Supports two execution modes:
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -19,7 +18,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from exasol.connection import connect, is_exasol_available
-from scoring.scoring import PARAMS, s_value, s_product, s_timing, aggregate, evidence
+from scoring.scoring import s_value, s_product, s_timing, aggregate, evidence
 
 
 def deploy_udfs(conn):

@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Yellowtail&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/demo/styles.css?v=1789306206">
+<link rel="stylesheet" href="/demo/styles.css?v=1789306210">
 </head>
 <body>
 
@@ -142,6 +142,7 @@
 
 <div id="app-shell" class="app-shell hidden-app">
   <!-- TOP HEADER -->
+  <a id="skip-link" class="skip-link" href="#main-content">Skip to main content</a>
   <header class="topbar">
     <div class="topbar-left">
       <h1 class="brand clickable" id="brand-home-btn" title="Return to Intro" onclick="if(window.returnToLanding) window.returnToLanding();" tabindex="0" role="button" aria-label="Return to intro screen">
@@ -189,7 +190,7 @@
 
 
   <!-- PAGE CONTENT -->
-  <div class="content-area">
+  <div class="content-area" id="main-content" tabindex="-1">
     
     <!-- RING REVIEW -->
     <div id="view-queue" class="view-section active">
@@ -449,7 +450,7 @@
 </div>
 
 <script src="/demo/data.js?v=1788330000"></script>
-<script src="/demo/app.js?v=1789306203"></script>
+<script src="/demo/app.js?v=1789306210"></script>
 <script src="/demo/assistant.js?v=2"></script>
 <script src="/demo/constellation.js?v=1788330000"></script>
 <!-- Local-only: real Exasol audit trail via server.py's /api/audit. See exasol/README.md. -->

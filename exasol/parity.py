@@ -5,9 +5,6 @@ Isolates:
 2. End-to-end parity across all signals, aggregates, and expected losses.
 """
 
-import argparse
-import json
-import math
 import sys
 from pathlib import Path
 
