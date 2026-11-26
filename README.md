@@ -1,276 +1,333 @@
 # Circe: a fraud-review assistant for credit-risk analysts
 
-**Persona:** a credit-risk analyst at an invoice-discounting platform (TReDS) who has a queue of suspicious invoice loops and a limited day to review them.
-**Vertical:** fintech / financial risk.
+Circe finds circular-trading fraud in invoice data, ranks the suspicious loops by **one analyst's own review rules**, and answers questions about each loop from its scored evidence.
 
-Circe finds circular-trading fraud in invoice data, scores every loop with transparent maths, and then works the way **you** work: you tell it your risk threshold, your exposure limit, the sectors you cover and how many rings you can review today, and it re-ranks the queue with a plain-language reason for every placement. You can ask it questions about any ring and it answers only from that ring's scored evidence.
+**Live:** https://circe-v2.vercel.app · **Vertical:** fintech, financial risk · **Persona:** credit-risk analyst at an invoice-discounting (TReDS) platform
 
-## How it decides, and how it explains
+> The core rule: **code decides, the language model explains.** No model output can change a score, a classification or a queue position.
 
-| Step | Who does it | Why |
+## Contents
+
+1. [Vertical, persona and problem](#1-vertical-persona-and-problem)
+2. [How Circe meets the challenge criteria](#2-how-circe-meets-the-challenge-criteria)
+3. [What makes it different](#3-what-makes-it-different)
+4. [Architecture](#4-architecture)
+5. [Detection and scoring](#5-detection-and-scoring)
+6. [Context-driven decisions](#6-context-driven-decisions)
+7. [The assistant](#7-the-assistant)
+8. [Google services](#8-google-services)
+9. [Security](#9-security)
+10. [Efficiency](#10-efficiency)
+11. [Testing](#11-testing)
+12. [Accessibility](#12-accessibility)
+13. [Measured results](#13-measured-results)
+14. [Run, configure, deploy](#14-run-configure-deploy)
+15. [API reference](#15-api-reference)
+16. [Assumptions and limitations](#16-assumptions-and-limitations)
+
+## 1. Vertical, persona and problem
+
+On a TReDS platform, suppliers get early cash by discounting their invoices. In **circular trading**, connected firms bill each other in a loop (`A → B → C → A`) to inflate turnover or to finance receivables with no real trade behind them.
+
+The analyst has two problems:
+
+| Problem | Why it is hard | What Circe does |
 |---|---|---|
-| Find loops, score four signals, abstain on missing data | Deterministic Python (`graph/`, `scoring/`) | Reproducible, auditable, no hallucination |
-| Rank the queue from **your** context (threshold, exposure limit, sectors, daily capacity) | Deterministic Python (`pipeline/prioritise.py`) | The decision is code; every placement carries a reason |
-| Explain a ring, answer your questions | LLM (Gemini, then Groq) on a fact sheet, with a deterministic fallback (`ai/assistant.py`) | Plain language, but it cannot change a score or a decision |
+| **Too many loops.** The sample ledger has 60 firms and 172 invoices, which yield 5,542 candidate loops. | Real supply chains contain loops too, so finding a cycle proves nothing. | Scores each loop on four independent signals. 5 cross the default flag threshold. |
+| **The missing leg.** A loop can be left open on the platform and closed elsewhere. | A cycle search over invoices alone cannot see it. | Closes open invoice paths using shared directors, addresses or registration dates. |
 
-Gemini is tried first. If it has no key, fails, or its answer fails the checks, Groq is tried. If there is no API key, both are down, or each answer contradicts the deterministic classification or names another ring, the assistant returns a deterministic answer built from the same facts.
+The analyst also has limited time, their own risk appetite and a sector desk. A single fixed ranking ignores all three.
 
-## Safety by design
+## 2. How Circe meets the challenge criteria
 
-- **PII redaction before any LLM call**: PAN, GSTIN, Aadhaar, email, phone, director DIN, and company names and addresses (aliased to `Entity-E001`). See `ai/guard.py`.
-- **Prompt-injection guard**: known override patterns are rejected, questions are length-capped and delimited as untrusted input, and the model never receives client-supplied ring data. Rings are always looked up server-side.
-- **Hardened API**: 16 KB body cap, JSON-only errors with no internals, same-origin only (no wildcard CORS), per-IP rate limit on LLM routes, and security headers (CSP, `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`).
-- **Accessibility**: keyboard-operable controls, labelled form fields, `aria-live` announcements when the queue changes and when the assistant replies, dialog semantics with focus trap and focus return, reduced-motion support.
+| Criterion | Implementation | Verify in |
+|---|---|---|
+| **Smart, dynamic assistant** | Per-ring Q&A that reflects the analyst's current settings, with a two-provider fallback and a no-AI answer path | `ai/assistant.py`, `ai/provider.py`, `demo/assistant.js` |
+| **Logical decisions based on user context** | Four user inputs change the flagged set, order and bucket; each placement lists its reasons | `pipeline/prioritise.py`, `pipeline/tests/test_prioritise.py` |
+| **Practical, real-world usability** | A daily work queue (escalate, review today, backlog, other desk), saved settings, suggested questions, evidence memos, and ranking and explanations that work without an AI key | `demo/` |
+| **Clean, maintainable code** | Decision logic in pure functions, one flag threshold on the server, one route table shared by the local server and Vercel, JSON Schema contracts | `pipeline/`, `contract/` |
+| **One persona, one vertical** | Inputs, bucket names, prompts and page copy are written for a TReDS credit-risk analyst | this file, `SYSTEM_PROMPT` in `ai/assistant.py` |
 
-## Run it
+## 3. What makes it different
 
-```bash
-pip install -r requirements.txt          # jsonschema + pytest only
-python server.py 8000                    # then open http://localhost:8000/demo/
+1. **Corporate-graph closure.** An open invoice path can be completed by a `corporate_bridge` hop when its two end firms **directly** share a director, an exact registered address or an exact registration date. Evidence is pairwise and never chained through a third firm. If a real invoice already closes the pair, no bridge is claimed.
+2. **Abstention instead of guessing.** A signal without enough data returns `None`. The aggregate renormalises the weights over the remaining signals, and the UI and assistant say which signals abstained.
+3. **Explainable personal triage.** The same scored rings give different queues for different analysts, using deterministic rules and plain-language reasons.
+4. **The model sits outside the decision path.** It receives a fact sheet built on the server. A chat answer that names another ring or uses wording that contradicts the classification is discarded.
+5. **It degrades in steps.** Gemini, then Groq, then an answer assembled from the same facts. A reply cut off by a token limit is treated as a failure.
+6. **No runtime SDKs.** Both model APIs use Python's standard library. The front end is plain HTML, CSS and JavaScript with no build step.
+
+## 4. Architecture
+
+```
+data/entities.json, data/invoices.json   (synthetic)
+        │
+graph/      canonicalise → transaction graph → Tarjan SCC → bounded DFS cycles
+            └─ corporate bridge for open paths
+        │
+scoring/    value · product · timing · externality → weighted geometric mean
+        │
+pipeline/   base_rings.json (precomputed subset)  ·  run_rescore() (live)
+        │
+        ├── prioritise.py ◄── analyst context        DECIDES  (pure, no I/O)
+        │
+        └── ai/guard.py → ai/assistant.py → ai/provider.py    EXPLAINS
+                                             Gemini → Groq → deterministic
+        │
+pipeline/http_common.py   route table, body cap, headers, rate limit
+        │
+server.py (local)   ·   api/*.py (Vercel functions)
+        │
+demo/       queue, network map, entity directory, ledger, context panel, chat
 ```
 
-For local keys, copy `.env.example` to `.env`; `server.py` reads it, and it is never committed or served.
-
-Optional: `GEMINI_API_KEY=...` enables LLM answers (model via `GEMINI_MODEL`, default `gemini-3.5-flash-lite`). `GROQ_API_KEY=...` adds the Groq fallback, or works on its own (`GROQ_MODEL`, default `openai/gpt-oss-120b`). Without either key everything still works with deterministic answers. Exasol is optional and not needed to run the app.
-
-```bash
-python -m pytest -q                      # 161 tests (one needs a live Exasol and is skipped without it)
-python -m pipeline.build_base_rings      # regenerate pipeline/base_rings.json after changing data/
-```
-
-Deploys to Vercel as-is (`vercel.json`); set `GEMINI_API_KEY` and/or `GROQ_API_KEY` as environment variables there. They are never committed.
-
-## API
-
-| Route | Purpose |
+| Path | Responsibility |
 |---|---|
-| `POST /api/prioritise` | `{context}` returns the ranked queue with buckets (escalate, review today, backlog, other desk) and reasons |
-| `POST /api/assistant` | `{ring_id, question, context, history}` returns a grounded answer and its source (`llm` or `deterministic`) |
-| `POST /api/ai/narrative` | `{ring_id}` returns an evidence memo for a ring |
-| `POST /api/rescore` | `{investigator_invoices}` re-runs detection with extra invoices |
-| `GET /api/health` | liveness |
+| `graph/` | Entity canonicalisation, Tarjan SCC, cycle search, corporate closure |
+| `scoring/` | The four signals, aggregation, evidence strings, benchmark helpers |
+| `pipeline/` | Service layer, prioritiser, shared HTTP layer, ring cache |
+| `ai/` | PII redaction, injection checks, grounded Q&A, memo generation |
+| `api/` | One thin Vercel handler per route |
+| `demo/` | Front end |
+| `contract/` | JSON Schemas and validator ([wire protocol](WIRE_PROTOCOL.md)) |
+| `data/` | Synthetic economy generator, fraud injector, ground truth |
+| `exasol/` | Optional database backend |
 
----
+## 5. Detection and scoring
 
-*Circe was first built for the Exasol AI + Data Challenge 2026 (fraud and anomaly detection, with Exasol as the in-database scoring backend). That work is described in the sections below and remains in this repository as an optional backend.*
+### 5.1 Candidate generation
 
-## Overview
+1. **Canonicalisation.** Two records merge only if their normalised name **and** address are identical. There is no fuzzy threshold, because a wrong merge would corrupt net-position arithmetic.
+2. **SCC partitioning.** An iterative Tarjan implementation, `O(V + E)`, with no recursion limit to hit.
+3. **Cycle search.** An iterative, depth-limited DFS for simple cycles of 3 to 8 firms. Each cycle is explored only from its lexicographically smallest node, so it is found once. Budgets per SCC are 50,000 cycles and 2,000,000 expansions.
+4. **Corporate closure.** Simple paths between bridgeable pairs, with budgets of 5,000 paths and 200,000 steps per pair.
 
-Circular trading is a systemic financial fraud mechanism where a syndicate of affiliated entities issues circular chains of fabricated invoices ($E_1 \rightarrow E_2 \rightarrow \dots \rightarrow E_k \rightarrow E_1$). The objectives include artificial turnover inflation, fraudulent Input Tax Credit (ITC) extraction, and the repeated discounting of non-existent trade receivables across multiple financing institutions.
+When a budget is reached, the search logs a truncation warning. Candidates are deduplicated by canonical key, and a transaction-closed ring wins over a corporate-closed one.
 
-Circe resolves two fundamental operational challenges in financial network surveillance:
+### 5.2 Signals
 
-1. **The Hairball Problem**: Legitimate supply chains naturally exhibit cyclic commerce (e.g., raw material suppliers, component manufacturers, assemblers, and logistics distributors). Topologically identifying a cycle is insufficient; the system must rigorously distinguish genuine economic loops from circular fraud.
-2. **The Missing Leg Problem**: Sophisticated fraud syndicates deliberately avoid closing the circular invoice chain on-ledger, utilizing off-platform cash settlements or informal arrangements for the terminal leg ($E_k \dots E_1$). Circe bridges unclosed invoice paths by extracting cross-entity corporate metadata (shared directors, registered office addresses, and incorporation dates) to uncover the hidden loop.
+All signals are in `[0, 1]`; higher means more consistent with circular trading. Definitions are in `scoring/scoring.py`.
 
----
-
-## System Architecture
-
-Circe operates as a modular, schema-enforced pipeline structured into four decoupled layers, with Exasol Personal serving as the central analytical backbone:
-
-```
-+-----------------------------------------------------------------------------+
-|                     1. EXASOL DATA PLATFORM & SYSTEM OF RECORD              |
-|  - Relational Schema: ENTITIES, INVOICES, GROUND_TRUTH, CANDIDATE_RINGS     |
-|  - SCORED_RINGS, RING_HOPS, RING_EVIDENCE, CIRCE_AUDIT_LOG                  |
-|  - Fast Bulk Load (pyexasol) and Exact Frozen JSON Wire Protocol Export     |
-+-----------------------------------------------------------------------------+
-                                       |
-                                       v
-+-----------------------------------------------------------------------------+
-|                                2. GRAPH LAYER                               |
-|  - Entity Canonicalization (Name & Address Normalization)                   |
-|  - Iterative Tarjan Strongly Connected Components (SCC) Partitioning        |
-|  - Depth-Limited DFS with Canonical-Start Pruning (Simple Cycles)           |
-|  - Pairwise Corporate-Graph Closure (Director, Address, Registration Dates) |
-+-----------------------------------------------------------------------------+
-                                       |
-                                       v
-+-----------------------------------------------------------------------------+
-|                     3. IN-DATABASE ANALYTICAL SCORING LAYER                 |
-|  - In-Database Columnar Execution: S_externality Aggregated In-Place in SQL |
-|  - 4 Pure Multi-Factor Signals (Flow, HS Product, Timing, Externality)      |
-|  - Calibrated Signal Abstention (Missing Data Handled Without Noise)        |
-|  - Mathematical Parity Proof Between In-DB Exasol and Reference Engine      |
-+-----------------------------------------------------------------------------+
-                                       |
-                                       v
-+-----------------------------------------------------------------------------+
-|                4. INVESTIGATOR CONSOLE & AI GOVERNANCE LAYER                |
-|  - Counsel Design System UI (Dark Palette, Tabular Financial Typography)    |
-|  - 4-Stage Guided Workflow: Review -> Visualise -> Investigate -> Verify    |
-|  - AI Evidence Explainer: "Our Model Decides, Our LLM Explains"             |
-|  - Dual-Stack Local Server & Exasol-Backed Live Rescoring (/api/rescore)    |
-+-----------------------------------------------------------------------------+
-```
-
----
-
-## Core Modules and Capabilities
-
-### 1. Exasol as System of Record and In-Database Compute (`exasol/`)
-
-* **Comprehensive Schema (`exasol/schema.sql`)**: Manages the complete platform lifecycle including `ENTITIES`, `INVOICES`, `CANDIDATE_RINGS`, `RING_HOPS`, `SCORED_RINGS`, and `CIRCE_AUDIT_LOG`.
-* **In-Database Scoring (`exasol/scoring.py`)**: Rather than extracting the entire transaction ledger into Python memory, heavy analytical signals like $S_{\text{externality}}$ run directly inside Exasol via columnar SQL aggregation, evaluating internal ring volume against total platform exposure.
-* **Mathematical Parity (`exasol/parity.py`)**: Rigorous verification suite asserting that Exasol in-database scoring produces results identical to the reference Python engine across all candidate rings.
-* **Offline Backup Invariant**: Adheres strictly to the specification requirement that `demo/index.html` functions with zero server or database dependencies, treating `demo/data.js` as an export artifact of Exasol.
-
-### 2. Graph Topology and Corporate Closure (`graph/`)
-
-* **Strongly Connected Component (SCC) Decomposition (`graph/scc.py`)**: Uses an iterative implementation of Tarjan's algorithm to partition the global platform graph into disjoint SCCs in linear time $O(V + E)$.
-* **Depth-Limited Cycle Search (`graph/cycles.py`)**: Traverses SCCs using a depth-bounded DFS with canonical-start vertex ordering, ensuring each simple cycle is enumerated exactly once with deterministic execution budgets.
-* **Corporate-Graph Closure (`graph/corporate.py`)**: Bridges unclosed invoice chains ($E_1 \rightarrow \dots \rightarrow E_k$) by evaluating pairwise corporate affinity (shared DINs, registered addresses, incorporation dates) to uncover the hidden closing leg.
-* **Entity Canonicalization (`graph/canonicalize.py`)**: Resolves entity aliasing by blocking on strict normalized `(name, address)` tuples.
-
-### 3. Multi-Factor Fraud Discrimination Engine (`scoring/`)
-
-Each candidate ring is evaluated across orthogonal financial, physical, and corporate dimensions:
-
-| Signal | Identifier | Mathematical / Logical Basis |
+| Signal | Definition | Abstains when |
 |---|---|---|
-| Flow Conservation | `s_value` | Variance of invoice amounts across consecutive hops; fabricated loops exhibit near-identical nominal values ($S_{\text{flow}} \approx 1.0$). |
-| Product Continuity | `s_product` | Harmonized System (HS) commodity code progression; tracks raw material $\rightarrow$ intermediate $\rightarrow$ finished goods transitions vs. identical commodity round-tripping. |
-| Economic Isolation | `s_externality` | Ratio of internal ring invoice volume to total platform trade of member entities; shell networks operate with near-zero outside trade. Aggregated in-database in Exasol. |
-| Timing Anomalies | `s_timing` | Velocity and temporal sequencing of invoices; flags ultra-short round-trip durations or out-of-order financing requests. |
+| `value` | `exp(−(Σ\|netᵢ\| / Σ invoice value) / 0.15)`, where `netᵢ` is the net position of each firm with both an incoming and an outgoing invoice. Near 1 when little value stays with them. | No such firm, no invoice hops, or zero value |
+| `product` | Mean HS-code similarity of consecutive invoice hops: identical 1.0, same 4-digit prefix 0.7, same 2-digit prefix 0.3, otherwise 0 | No comparable pair of HS codes |
+| `timing` | `w·(1 − min(CV/0.60, 1)) + (1−w)·exp(−mean_gap/30)` over the days between consecutive invoices, with `w = 0.5·min(1, (gaps−1)/4)`. All-zero gaps score 1.0. | Fewer than 3 invoice hops, or a missing or invalid date |
+| `externality` | Share of the member firms' total invoice value that stays inside the ring. It measures economic isolation. | The members have no invoice volume |
 
-**Signal Abstention Protocol**: When input records lack non-mandatory metadata, signals explicitly enter an `ABSTAINED` state rather than assigning an artificial zero, preserving aggregate score integrity.
-
-**Expected Loss Formulation**:
-$$\text{Expected Loss} = \text{Aggregate Risk Score} \times \text{Gross Platform Exposure}$$
-
-### 4. AI Evidence Explainer and Governance (`ai/`)
-
-* **Governance Principle**: *"Our model decides, our LLM explains."* The LLM never enters the fraud decision path.
-* **Evidence Synthesis (`ai/provider.py`)**: Accepts deterministic mathematical scores and corporate metadata and synthesizes a formal financial intelligence memo.
-* **Graceful Degradation**: Operates via the Gemini REST API, with Groq as fallback, using standard libraries; if no API key is present, the system cleanly returns a structured, deterministic explanation without crashing.
-* **Observability Log**: Every AI narrative generated is recorded in Exasol's `CIRCE_AUDIT_LOG`.
-
----
-
-## Repository Structure
+### 5.3 Aggregate and exposure
 
 ```
-.
-├── .github/
-│   ├── CODEOWNERS               # Track ownership specifications
-│   └── workflows/ci.yml         # Continuous integration test runner and freshness checks
-├── ai/                          # AI governance and narrative generation
-│   ├── provider.py              # LLM client with zero-dependency REST integration
-│   └── tests/                   # Narrative test suite
-├── api/
-│   ├── health.py                # Vercel serverless health endpoint (/api/health)
-│   └── rescore.py               # Vercel serverless dynamic rescoring engine (/api/rescore)
-├── artifacts/
-│   ├── candidate_rings.json     # Graph engine candidate output
-│   ├── exasol_benchmark.json    # Measured performance benchmark artifact
-│   └── scored_rings.json        # Ranked, scored ring dataset
-├── contract/                    # Frozen JSON Schema contracts and validation tools
-│   ├── candidate_ring.schema.json
-│   ├── entity.schema.json
-│   ├── ground_truth.schema.json
-│   ├── invoice.schema.json
-│   ├── scored_ring.schema.json
-│   └── validate.py
-├── data/                        # Economy generation and synthetic fraud injectors
-│   ├── generator/               # Sector trade matrices, shell generator, fraud injector
-│   ├── entities.json            # Base platform corporate registry
-│   ├── ground_truth.json        # Injected fraud ring benchmark identities
-│   └── invoices.json            # Platform transaction ledger
-├── demo/                        # Production investigator application
-│   ├── app.js                   # UI controllers, mutable state store, SVG visualizers
-│   ├── build_data.py            # Deterministic data.js compiler
-│   ├── constellation.js         # WebGL constellation intro animation
-│   ├── data.js                  # Pre-compiled dataset bundle (offline reference demo)
-│   ├── index.html               # Main application shell
-│   └── styles.css               # Counsel Design System tokens and component rules
-├── exasol/                      # Exasol Personal / Nano integration
-│   ├── benchmark.py             # Performance benchmark runner
-│   ├── connection.py            # Central credential and connection factory
-│   ├── load.py                  # Bulk data loader
-│   ├── parity.py                # Mathematical parity verification suite
-│   ├── README.md                # Exasol setup and execution run guide
-│   ├── repository.py            # Schema-compliant query and export layer
-│   ├── schema.sql               # Exasol DDL definitions
-│   ├── scoring.py               # In-database scoring engine
-│   └── tests/                   # Parity verification tests
-├── graph/                       # Graph topology, SCC partitioning, DFS, corporate closure
-├── pipeline/                    # Unified service layer connecting backend and Exasol
-│   └── service.py               # Service handlers for detection and live rescoring
-├── scoring/                     # Pure reference 4-factor scoring engine
-│   ├── scoring.py
-│   └── tests/                   # Comprehensive regression asserts
-├── server.py                    # Local dual-stack development server with live Exasol backend
-├── vercel.json                  # Production Vercel deployment configuration
-└── WIRE_PROTOCOL.md             # Inter-track data exchange contracts and dated amendments
+aggregate     = exp( Σ wₖ · ln(max(sₖ, 1e−9)) / Σ wₖ )     over non-abstained signals, wₖ = 0.25
+expected_loss = round( unrounded aggregate × Σ invoice value in the ring )
 ```
 
----
+If every signal abstains, the aggregate is 0. The geometric mean lets one very low signal pull the result down sharply. A ring is flagged by default at **0.70** (`FLAG_THRESHOLD`). `expected_loss` is a ranking weight, not a calibrated probability of loss.
 
-## Performance Benchmarking
+An additional industry note reports a services-class seller issuing an invoice with a goods HS code. It appears as evidence and does **not** change the score.
 
-Performance was evaluated on a benchmark dataset of 5,542 candidate rings across the platform transaction graph:
+## 6. Context-driven decisions
 
-| Execution Engine | Environment | Wall-Clock Duration | Throughput | Parity Status |
-|---|---|---|---|---|
-| Python Reference Engine | Out-of-Database (Local Process) | 2.1102 s | 2,626.3 rings/sec | Reference Baseline |
-| Exasol In-Database Scoring | Exasol Personal / Nano (In-DB SQL) | Sub-second per batch | High-concurrency Columnar | Proven (0 mismatches) |
+`prioritise(rings, entities, context)` is a pure function.
 
-*Full machine-readable benchmark details are recorded in `artifacts/exasol_benchmark.json`.*
+| Input | Validation | Effect |
+|---|---|---|
+| `risk_threshold` | Number, clamped to 0.50–0.90, default 0.70 | Decides which rings are flagged for this analyst |
+| `exposure_limit_inr` | Non-negative number up to 10¹², optional | Flagged rings at or above it are escalated |
+| `sectors` | Only sectors present in the data; empty means all | A ring with no member in these sectors goes to another desk |
+| `daily_capacity` | Integer, clamped to 1–50, default 10 | Limits "review today"; the rest becomes backlog |
 
----
+Each ring takes the **first** rule that applies:
 
-## Testing and Verification
+```
+score < risk_threshold                  → cleared (counted, not queued)
+sectors set and no member matches       → other_desk
+limit set and expected_loss ≥ limit     → escalate        (not limited by capacity)
+otherwise                               → review_today    (overflow → backlog)
+```
 
-Circe maintains a 75-test automated verification suite covering unit logic, graph invariants, cycle search budgets, corporate bridge recovery, schema contracts, and adversarial benchmarks:
+Buckets are ordered `escalate`, `review_today`, `backlog`, `other_desk`, then by exposure. The sector rule runs before escalation, so a large out-of-sector ring is routed to the other desk.
+
+Real output for threshold 0.70, sector `manufacturing`, capacity 2:
+
+| Rank | Ring | Bucket | Last reason shown |
+|---|---|---|---|
+| 1 | R5538 | review_today | Within your daily capacity of 2 |
+| 2 | R5542 | review_today | Within your daily capacity of 2 |
+| 3 | R5540 | backlog | Beyond your daily capacity of 2 |
+| 4 | R5541 | other_desk | No entity in your sectors; route to the desk that covers them |
+| 5 | R5539 | other_desk | No entity in your sectors; route to the desk that covers them |
+
+R5541 has the largest exposure of the five, yet ranks fourth for this analyst. With no sector filter, it ranks first.
+
+Raising the threshold also changes the flagged set on this data: 0.70 flags 5 rings, 0.82 flags 4 and 0.90 flags none.
+
+Settings are saved in the browser. If the ranking API is unreachable, the page says so and falls back to exposure order. The ranking rules are not duplicated in JavaScript.
+
+## 7. The assistant
+
+### 7.1 Request path
+
+```
+question
+  → guard.check_question      type, empty, 500-character cap, injection patterns, PII masking
+  → get_ring(ring_id)         server-side lookup; client ring data is never accepted
+  → build_facts               scores and their meanings, abstentions, evidence, closure meaning,
+                              exposure, and this analyst's bucket and reasons
+  → alias company names       question and earlier questions included
+  → Gemini → Groq             first reply that passes answer_ok
+  → otherwise                 deterministic answer from the same facts
+```
+
+The response carries `source: "llm"` or `"deterministic"`, and the UI labels every answer accordingly.
+
+### 7.2 Grounding controls
+
+- The system prompt limits answers to the `FACTS` block, requires "not in the evidence" for anything else, forbids changing the classification or giving legal advice, and marks `<question>` text as untrusted.
+- Jargon is defined inside the facts, so the model does not have to guess what a closure type or signal means.
+- At most the last three **questions** are sent as history, each checked again. Answers supplied by the client are never replayed to the model.
+- `answer_ok` rejects empty replies, other ring IDs, and phrases that contradict a flagged or cleared status.
+- Without a working model, keyword intents answer: why flagged, which signals abstained, what the closure means, the scores, and what to do next.
+
+### 7.3 Evidence memo
+
+`generate_narrative` asks for a plain-text memo under 250 words, with no dates, recipients, historical comparisons, intent allegations or actions. Evidence is redacted first. If both providers fail, a templated memo is returned.
+
+These memo limits are **prompt instructions**. The `answer_ok` check applies to chat only.
+
+## 8. Google services
+
+| Service | Use |
+|---|---|
+| **Gemini API** (`gemini-3.5-flash-lite`) | Primary model for chat answers and evidence memos. REST `generateContent` with `systemInstruction`, temperature 0.2, a 1,500-token cap, low thinking level on Gemini 3 models, a 10 s timeout, and the key in the `x-goog-api-key` header |
+| **Google Fonts** | Interface typefaces, allowed explicitly by the Content Security Policy |
+
+The fallback is Groq's `openai/gpt-oss-120b`. Override models with `GEMINI_MODEL` and `GROQ_MODEL`.
+
+## 9. Security
+
+| Threat | Control |
+|---|---|
+| Personal data reaching a model provider | GSTIN, PAN, email, Indian phone, Aadhaar and `DIN`-prefixed numbers are masked by pattern. Known company names and addresses become aliases such as `Entity-E001`. |
+| Prompt injection | Pattern blocklist, length cap, delimited untrusted input, output check, and no decision authority for the model |
+| Forged evidence from the client | Endpoints accept a ring ID and look the ring up on the server |
+| Oversized or malformed requests | 16 KB body cap; `Content-Length` and JSON validated; JSON error responses |
+| Leaked keys or internals | Keys come from environment variables; model keys travel in headers; model, rescore and unhandled route errors return fixed messages and log the exception type |
+| Local file exposure | The local server returns 404 for any dotfile or dot-directory, including `.env` and `.git` |
+| Cross-origin use from browsers | No CORS grant |
+| Browser attacks | CSP, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`; HSTS on Vercel |
+| Script injection from model text | Chat answers are written with `textContent` |
+| Quota abuse | 20 requests per minute per IP across the chat and memo routes |
+
+**Known gaps:** a blocklist can be bypassed, and `answer_ok` does not verify every number or claim. The CSP still allows inline scripts and styles. The rate limit is held in memory, so each Vercel instance counts separately, and the `X-Forwarded-For` value it keys on can be spoofed on a directly exposed local server. `/api/rescore` is not rate-limited. The local-only `/api/audit` route (Exasol) can return exception text. The local server listens on all network interfaces. There is no user authentication, since the data is synthetic.
+
+## 10. Efficiency
+
+- **Precomputed ring cache.** `pipeline/base_rings.json` holds 60 of the 5,542 scored rings: every ring scoring at least 0.50, the 60 largest by exposure and every ring in the demo bundle (these sets overlap). It loads in about 0.2 s on the development machine, compared with about 3.6 s to detect and score everything there. A test checks that the cache is current.
+- **In-process caching** of the loaded rings with `lru_cache`.
+- **Bounded work:** search budgets, a 200-item response cap, a 16 KB request cap and 10 s timeouts per model call. Two stalled providers can therefore delay an answer by about 20 s.
+- **Small footprint:** `requirements.txt` lists only `jsonschema` and `pytest`; the front end ships without a bundler.
+
+## 11. Testing
+
+169 tests. 168 run anywhere; the Exasol parity test needs a live database and **fails without one**.
 
 ```bash
-# Run complete test suite
 python -m pytest -q
-
-# Validate all data and artifacts against formal JSON schemas
-python contract/validate.py data/*.json artifacts/*.json
-
-# Run Exasol parity test (when local Exasol instance is running)
-python -m exasol.parity
+python -m pytest -q --deselect exasol/tests/test_parity.py::test_exasol_parity_when_live
 ```
 
----
+| Area | Tests | Covers |
+|---|---|---|
+| `ai/` | 53 | PII patterns, injection, grounding, output rejection, provider fallback, truncation, no key or error leakage, prompt redaction |
+| `graph/` | 62 | SCC, cycles, depth limits and budgets, corporate closure, canonicalisation, malformed data |
+| `pipeline/` | 37 | Ranking rules, HTTP integration on a real socket, headers, rate limit, dotfile blocking, cache freshness, Vercel entrypoints |
+| `data/generator/` | 10 | Synthetic data generator |
+| `exasol/` | 6 | UDF logic and parity |
+| `scoring/` | 1 | Scoring checks |
 
-## Running the Application
+Provider tests replace the network calls with stubs. CI (`.github/workflows/ci.yml`) validates data against the JSON Schemas and runs pytest on each push to `main`.
 
-### Local Development with Exasol
+## 12. Accessibility
+
+- Ring cards are native buttons with `aria-expanded`.
+- New form controls have labels, and sector checkboxes are grouped in a `fieldset`.
+- `aria-live` regions announce queue updates, the rescore banner, memos and chat replies.
+- Dialogs have `role="dialog"` and `aria-modal`, trap Tab, close on Escape and return focus.
+- Reduced-motion preferences are handled in the stylesheet.
+- Text in the context panel and chat was checked for 4.5:1 contrast, and the one failing badge was fixed.
+
+**Not yet done:** testing with a screen reader or a full-site contrast audit. The context panel and ring cards fit a 375 px screen, but the top bar and navigation still overflow it.
+
+## 13. Measured results
+
+Synthetic benchmark: 60 firms, 172 invoices, 6 injected fraud rings, 5,542 candidates (139 of them corporate-closed). A match means the firm sets have Jaccard similarity of at least 0.5.
+
+| Measure | Result |
+|---|---|
+| Injected rings present among candidates | **6 of 6**, each with an exact firm-set match |
+| Injected rings flagged at 0.70 | **5 of 6** |
+| Flagged rings that are injected fraud | **5 of 5** |
+| Injected ring with an omitted invoice leg | Recovered by corporate closure and flagged (R5538, 0.81) |
+| Precision@6 when **all** candidates are sorted by exposure, ignoring the threshold | 4 of 6 |
+
+**The miss:** injected ring T01 scores 0.38. Its `value` (0.90) and `product` (1.00) signals are high, but its members trade heavily outside the loop, so `externality` is 0.04 and the geometric mean falls. A ring that hides inside real trade can evade the current weights.
+
+These figures describe one synthetic dataset with known injected patterns. They do not estimate accuracy on real platform data.
+
+## 14. Run, configure, deploy
+
+Python 3.11 or later.
+
 ```bash
-# Launch server with Exasol support and live rescoring
-python server.py 8000
+pip install -r requirements.txt
+python server.py 8000            # open http://localhost:8000/demo/
 ```
-Open `http://localhost:8000/demo/` in any modern web browser.
 
-### Static hosting only
-The pages load assets from absolute `/demo/...` paths, so serve the repository root (`python server.py`, or Vercel). Without the API the queue falls back to exposure order and the assistant says it needs the server.
+Serve the repository through `server.py` or Vercel. Opening `index.html` from disk does not work because assets use absolute `/demo/...` paths.
 
----
+For AI answers, copy `.env.example` to `.env` and add either key or both. `server.py` reads the file; real environment variables take precedence. `.env` is git-ignored.
 
-## Benchmark Metrics Against Ground Truth
+| Variable | Required | Default |
+|---|---|---|
+| `GEMINI_API_KEY` | No | none |
+| `GROQ_API_KEY` | No | none |
+| `GEMINI_MODEL` | No | `gemini-3.5-flash-lite` |
+| `GROQ_MODEL` | No | `openai/gpt-oss-120b` |
 
-Evaluated against the ground-truth benchmark dataset (`data/ground_truth.json`):
+**Using it:** enter the investigation, set **My review context**, open a ring, then use **Ask about this ring** or **Generate AI Evidence Narrative**.
 
-* **Recall**: 100% (6/6 injected fraud rings identified).
-* **Corporate-Closed Ring Discovery**: Recovered hidden-leg rings (`T04`, `T06`) at 1.00 Jaccard similarity via pairwise director, address, and registration linkages.
-* **Precision@6**: 66.7% (top-ranked candidate is a confirmed fraud syndicate).
-* **Mathematical Parity**: 100% agreement between Python reference and Exasol in-database scoring.
-* **Determinism**: 100% reproducible across operating systems via canonical coordinate layout algorithms and deterministic ID hashing.
+**Vercel:** pushing to `main` deploys the linked project. Add the keys under *Settings → Environment Variables*, then redeploy. Each `api/*.py` file must declare a literal `class handler` and must not export `app` or `application`; a test enforces this.
 
----
+After changing `data/`, run `python -m pipeline.build_base_rings`.
 
-## Limitations and Disclosures
+## 15. API reference
 
-* **Data Sourcing**: In accordance with the challenge scope, economic trade transactions and corporate syndicates are generated via synthetic input-output macroeconomic models rather than proprietary bank TReDS feeds.
-* **Deployment Target**: Tested against local Exasol Personal / Nano starter kit instances. Cloud deployment to AWS or Azure can be provisioned via the Exasol launcher without code modification.
-* **AI Architectural Separation**: LLM narrative generation is intentionally non-decisional; all fraud classification and ranking are performed deterministically by the mathematical scoring engine.
+All bodies are JSON.
 
----
+| Route | Request | Success response |
+|---|---|---|
+| `POST /api/prioritise` | `{context}` | `{context, ranked[{ring_id, rank, bucket, reasons, aggregate, expected_loss}], flagged_count, cleared_count}` |
+| `POST /api/assistant` | `{ring_id, question, context, history}` | `{answer, source, grounded_on, ring_id}` |
+| `POST /api/ai/narrative` | `{ring_id}` | `{ring_id, status, ai_available, narrative, governance_note}` |
+| `POST /api/rescore` | `{investigator_invoices}` | `{rings, total_candidate_count, high_risk_count, schema_version, source}` |
+| `GET /api/health` | none | `{status}` |
 
-## License
+```bash
+curl -X POST http://localhost:8000/api/assistant \
+  -H "Content-Type: application/json" \
+  -d '{"ring_id":"R5541","question":"Why is this flagged?","context":{"risk_threshold":0.8}}'
+```
 
-Internal research and prototype developed for the Exasol AI + Data Challenge 2026. All rights reserved.
+Errors: `400` invalid input or rejected question, `404` unknown ring, `413` body too large, `429` rate limited, `500` fixed message. The assistant answers only about rings in the cached set, so a ring created by a live rescore may return `404`.
+
+## 16. Assumptions and limitations
+
+- **All data is synthetic**, generated from a modelled sector economy with injected fraud. No real firms or platform feeds are used.
+- A flag is a **reason to review**, not a finding of fraud and not legal advice.
+- A shared director, address or registration date is a lead. It does not prove common control, and shared registration dates are the weakest of the three.
+- Weights and constants are hand-set. The repository's own benchmark helper recommends reviewing the weights because of the top-6 result above; they have not been retuned.
+- One analyst context is stored per browser; there are no accounts or shared audit history in the Vercel deployment.
+- **Exasol is optional.** Circe began as an Exasol AI + Data Challenge 2026 entry. The database backend, parity check and audit trail remain in [`exasol/`](exasol/README.md) for local use and are not part of the deployed app.
+
+Also see [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

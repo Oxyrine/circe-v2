@@ -195,7 +195,8 @@ def run_rescore(investigator_invoices, base_dir=None, max_depth=8, limit=50):
             entities = entities_map(entities_path)
             base_invoices = invoices_list(invoices_path)
     except Exception as e:
-        return 500, {"error": "Failed to load base data: " + str(e)}
+        print(f"run_rescore: loading base data failed ({type(e).__name__})")
+        return 500, {"error": "failed to load base data"}
 
     merged_invoices = list(base_invoices) + list(investigator_invoices)
     entities_list = list(entities.values())
@@ -206,7 +207,8 @@ def run_rescore(investigator_invoices, base_dir=None, max_depth=8, limit=50):
         scored.sort(key=lambda r: r.get("expected_loss", 0), reverse=True)
         top = scored[:limit] if limit else scored
     except Exception as e:
-        return 500, {"error": "Pipeline error: " + str(e)}
+        print(f"run_rescore: pipeline failed ({type(e).__name__})")
+        return 500, {"error": "pipeline error"}
 
     high_risk = [r for r in top if (r.get("aggregate") or 0) >= FLAG_THRESHOLD]
     response = {

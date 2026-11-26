@@ -72,6 +72,16 @@ def test_facts_contain_no_entity_names(flagged):
     assert not any(e["name"] in blob or e["address"] in blob for e in ents.values())
 
 
+def test_company_names_typed_into_chat_are_redacted(monkeypatch, flagged):
+    from pipeline.service import entities_map
+    name = list(entities_map().values())[-1]["name"]
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    seen = {}
+    monkeypatch.setattr(provider, "call_gemini_api", lambda p, k, system="": seen.setdefault("p", p))
+    assistant.answer(flagged["ring_id"], f"is {name} involved?", CTX, [f"who owns {name}?"])
+    assert name not in seen["p"] and "Entity-" in seen["p"]
+
+
 def test_facts_explain_the_jargon(flagged):
     from pipeline.service import entities_map
     facts = assistant.build_facts(flagged, entities_map(), CTX)

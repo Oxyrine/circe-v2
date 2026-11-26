@@ -147,18 +147,19 @@ def answer(ring_id, question, ctx, history=None):
 
     entities = entities_map()
     facts = build_facts(ring, entities, ctx)
+    names = guard.names_from_entities(entities)  # any company the user might type, not just this ring's
 
     # Prior turns: only the user's earlier questions, re-checked; never client-supplied answers.
     prior = []
     for h in (history or [])[-3:]:
         v = guard.check_question(h)
         if v.ok:
-            prior.append(v.text)
+            prior.append(guard.redact(v.text, names))
 
     prompt = (
         f"FACTS:\n{json.dumps(facts, ensure_ascii=False)}\n\n"
         + (f"EARLIER QUESTIONS: {json.dumps(prior)}\n\n" if prior else "")
-        + f"<question>{verdict.text}</question>"
+        + f"<question>{guard.redact(verdict.text, names)}</question>"
     )
     text = call_llm(prompt, system=SYSTEM_PROMPT, ok=lambda t: answer_ok(t, facts))
     if text:

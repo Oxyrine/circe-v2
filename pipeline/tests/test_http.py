@@ -150,3 +150,22 @@ CIRCE_C=file
         monkeypatch.delenv(k)
     server.load_env(f)
     assert [server.os.environ[k] for k in ("CIRCE_A", "CIRCE_B", "CIRCE_C")] == ["one", "two", "real"]
+
+
+def test_rescore_failure_hides_exception_text(monkeypatch):
+    from pipeline import service
+
+    def boom(*a, **k):
+        raise RuntimeError("secret internal path")
+
+    monkeypatch.setattr(service, "find_candidate_rings", boom)
+    assert service.run_rescore([]) == (500, {"error": "pipeline error"})
+
+
+def test_csp_allows_fonts_the_pages_load_and_matches_vercel():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    csp = http_common.SECURITY_HEADERS["Content-Security-Policy"]
+    assert "https://fonts.googleapis.com" in csp and "font-src 'self' https://fonts.gstatic.com" in csp
+    cfg = json.loads((root / "vercel.json").read_text(encoding="utf-8"))
+    assert cfg["routes"][0]["headers"]["Content-Security-Policy"] == csp

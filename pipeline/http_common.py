@@ -27,7 +27,8 @@ SECURITY_HEADERS = {
     "Cross-Origin-Opener-Policy": "same-origin",
     # Demo pages use inline <script>/<style>, so those stay allowed; all fetches are same-origin.
     "Content-Security-Policy": (
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
     ),
 }
