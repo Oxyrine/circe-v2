@@ -20,6 +20,3 @@ class handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
-
-app = handler
-application = handler

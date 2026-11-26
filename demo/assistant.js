@@ -85,7 +85,7 @@
     }).catch(function () {
       ranking = null;
       window.circeRender && window.circeRender();
-      setStatus("Context ranking needs the server; showing the default exposure order.", true);
+      setStatus("Context ranking is unavailable right now; showing the default exposure order.", true);
     });
   }
 
@@ -286,7 +286,7 @@
           }
         })
         .catch(function () {
-          pending.querySelector(".chat-text").textContent = "The assistant needs the server running. Start it with python server.py.";
+          pending.querySelector(".chat-text").textContent = "Couldn't get an answer from the server. Please try again in a moment.";
         })
         .then(function () { send.disabled = false; input.focus(); });
     }
