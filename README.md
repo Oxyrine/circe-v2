@@ -6,6 +6,18 @@ Circe finds circular-trading fraud in invoice data, ranks the suspicious loops b
 
 > The core rule: **code decides, the language model explains.** No model output can change a score, a classification or a queue position.
 
+## Problem statement
+
+**A credit-risk analyst on an invoice-discounting (TReDS) platform has more suspicious invoice loops than time to review them. How can an assistant find the likely circular-trading ones, order them by that analyst's own risk rules, and explain each one without the AI making the decision?**
+
+| The problem needs | Circe's answer |
+|---|---|
+| Find loops, including ones with a leg missing from the platform | Cycle detection plus corporate-link closure ([§5](#5-detection-and-scoring)) |
+| Separate likely fraud from ordinary supply-chain loops | Four signals that abstain when data is missing ([§5](#5-detection-and-scoring)) |
+| Order the work by this analyst's threshold, exposure limit, sectors and capacity | A deterministic prioritiser with reasons ([§6](#6-context-driven-decisions)) |
+| Explain a ring and answer follow-up questions | A grounded assistant with fallbacks ([§7](#7-the-assistant)) |
+| Keep the AI out of the decision | The model has no way to write a score, status or queue position ([§3](#3-what-makes-it-different)) |
+
 ## Contents
 
 1. [Vertical, persona and problem](#1-vertical-persona-and-problem)
@@ -329,6 +341,6 @@ Errors: `400` invalid input or rejected question, `404` unknown ring, `413` body
 - A shared director, address or registration date is a lead. It does not prove common control, and shared registration dates are the weakest of the three.
 - Weights and constants are hand-set. The repository's own benchmark helper recommends reviewing the weights because of the top-6 result above; they have not been retuned.
 - One analyst context is stored per browser; there are no accounts or shared audit history in the Vercel deployment.
-- **Exasol is optional.** Circe began as an Exasol AI + Data Challenge 2026 entry. The database backend, parity check and audit trail remain in [`exasol/`](exasol/README.md) for local use and are not part of the deployed app.
+- **Exasol is optional.** A database backend, parity check and audit trail are available in [`exasol/`](exasol/README.md) for local use and are not part of the deployed app.
 
 Also see [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

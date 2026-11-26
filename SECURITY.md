@@ -2,9 +2,9 @@
 
 ## Reporting a vulnerability
 
-Open a [GitHub issue](https://github.com/Oxyrine/Circe/issues/new) describing the
-problem. There's no separate security inbox for this project — it's a hackathon
-submission (Exasol AI + Data Challenge 2026), not a production service.
+Open a [GitHub issue](https://github.com/Oxyrine/circe-v2/issues/new) describing the
+problem. There's no separate security inbox for this project — it's a prototype
+on synthetic data, not a production service.
 
 Include what you'd include for any bug report: the affected file/endpoint, steps
 to reproduce, and what you'd expect to happen instead.

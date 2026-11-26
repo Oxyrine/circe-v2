@@ -1,8 +1,8 @@
 # Contributing
 
 This documents the actual workflow the team (Aakash A, Catherine A, h4ash-abdul)
-used to build Circe for the Exasol AI + Data Challenge 2026, so it's here both
-for reference and for anyone picking up the project after submission.
+used to build Circe, so it's here both
+for reference and for anyone picking up the project.
 
 ## File ownership
 

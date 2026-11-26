@@ -1,4 +1,4 @@
-# Exasol AI + Data Challenge 2026: Circe Integration Guide
+# Circe: optional Exasol backend
 
 This guide documents the end-to-end integration of Exasol Personal / Nano as the system of record, in-database analytical scoring compute surface, and compliance audit trail for Circe.
 
