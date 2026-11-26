@@ -1,14 +1,56 @@
-# Circe: Financial Ring Intelligence
+# Circe: a fraud-review assistant for credit-risk analysts
 
-**Submission for the Exasol AI + Data Challenge 2026**
-* Primary Track: **Predict, Detect & Optimize** (Fraud & Anomaly Detection)
-* Secondary Alignment: **AI Trust, Safety & Governance** (Observability, Compliance Audit Trails, and Calibrated Refusal)
+**Persona:** a credit-risk analyst at an invoice-discounting platform (TReDS) who has a queue of suspicious invoice loops and a limited day to review them.
+**Vertical:** fintech / financial risk.
 
-Automated detection and discrimination of circular trading fraud on trade receivables and invoice discounting platforms (TReDS), powered by Exasol Personal / Nano as the high-performance system of record and in-database analytical compute surface.
+Circe finds circular-trading fraud in invoice data, scores every loop with transparent maths, and then works the way **you** work: you tell it your risk threshold, your exposure limit, the sectors you cover and how many rings you can review today, and it re-ranks the queue with a plain-language reason for every placement. You can ask it questions about any ring and it answers only from that ring's scored evidence.
 
-📹 **[Watch the 3-minute demo video](circe-demo-video.mp4)** · 📊 **[View the pitch deck](circe-pitch-deck.pptx)**
+## How it decides, and how it explains
+
+| Step | Who does it | Why |
+|---|---|---|
+| Find loops, score four signals, abstain on missing data | Deterministic Python (`graph/`, `scoring/`) | Reproducible, auditable, no hallucination |
+| Rank the queue from **your** context (threshold, exposure limit, sectors, daily capacity) | Deterministic Python (`pipeline/prioritise.py`) | The decision is code; every placement carries a reason |
+| Explain a ring, answer your questions | LLM (Gemini) on a fact sheet, with a deterministic fallback (`ai/assistant.py`) | Plain language, but it cannot change a score or a decision |
+
+If there is no API key, the LLM is down, or its answer contradicts the deterministic classification or names another ring, the assistant returns a deterministic answer built from the same facts.
+
+## Safety by design
+
+- **PII redaction before any LLM call**: PAN, GSTIN, Aadhaar, email, phone, director DIN, and company names and addresses (aliased to `Entity-E001`). See `ai/guard.py`.
+- **Prompt-injection guard**: known override patterns are rejected, questions are length-capped and delimited as untrusted input, and the model never receives client-supplied ring data. Rings are always looked up server-side.
+- **Hardened API**: 16 KB body cap, JSON-only errors with no internals, same-origin only (no wildcard CORS), per-IP rate limit on LLM routes, and security headers (CSP, `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`).
+- **Accessibility**: keyboard-operable controls, labelled form fields, `aria-live` announcements when the queue changes and when the assistant replies, dialog semantics with focus trap and focus return, reduced-motion support.
+
+## Run it
+
+```bash
+pip install -r requirements.txt          # jsonschema + pytest only
+python server.py 8000                    # then open http://localhost:8000/demo/
+```
+
+Optional: `GEMINI_API_KEY=...` enables LLM answers (model via `GEMINI_MODEL`, default `gemini-2.5-flash`). Without it everything still works with deterministic answers. Exasol is optional and not needed to run the app.
+
+```bash
+python -m pytest -q                      # 140 tests (one needs a live Exasol and is skipped without it)
+python -m pipeline.build_base_rings      # regenerate pipeline/base_rings.json after changing data/
+```
+
+Deploys to Vercel as-is (`vercel.json`); set `GEMINI_API_KEY` as an environment variable there. It is never committed.
+
+## API
+
+| Route | Purpose |
+|---|---|
+| `POST /api/prioritise` | `{context}` returns the ranked queue with buckets (escalate, review today, backlog, other desk) and reasons |
+| `POST /api/assistant` | `{ring_id, question, context, history}` returns a grounded answer and its source (`llm` or `deterministic`) |
+| `POST /api/ai/narrative` | `{ring_id}` returns an evidence memo for a ring |
+| `POST /api/rescore` | `{investigator_invoices}` re-runs detection with extra invoices |
+| `GET /api/health` | liveness |
 
 ---
+
+*Circe was first built for the Exasol AI + Data Challenge 2026 (fraud and anomaly detection, with Exasol as the in-database scoring backend). That work is described in the sections below and remains in this repository as an optional backend.*
 
 ## Overview
 
@@ -202,8 +244,8 @@ python server.py 8000
 ```
 Open `http://localhost:8000/demo/` in any modern web browser.
 
-### Zero-Server Offline Demo
-Simply open `demo/index.html` directly in your browser (`file://`). The application renders the complete, styled investigator experience with full interactivity and no network requests required.
+### Static hosting only
+The pages load assets from absolute `/demo/...` paths, so serve the repository root (`python server.py`, or Vercel). Without the API the queue falls back to exposure order and the assistant says it needs the server.
 
 ---
 

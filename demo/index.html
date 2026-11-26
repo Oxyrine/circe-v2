@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Circe · Financial Ring Intelligence</title>
+<title>Circe · Fraud-review assistant for credit-risk analysts</title>
+<meta name="description" content="Circe ranks suspected circular-trading rings by your review rules and answers questions from each ring's scored evidence.">
 <base href="/demo/">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Yellowtail&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/demo/styles.css?v=1788350000">
+<link rel="stylesheet" href="/demo/styles.css?v=1789306206">
 </head>
 <body>
 
@@ -24,7 +25,7 @@
         
         <!-- Eyebrow Line -->
         <p class="eyebrow-text uppercase mb-4 text-center">
-            TReDS CIRCULAR-TRADE DETECTION
+            FOR CREDIT-RISK ANALYSTS ON TReDS PLATFORMS
         </p>
 
         <!-- Writing Animation Title -->
@@ -34,7 +35,7 @@
         
         <!-- Tagline -->
         <p class="tagline-text uppercase mb-12 md:mb-16 text-center">
-            Financial Ring Intelligence
+            A fraud-review assistant for circular trading
         </p>
 
         <!-- Enter Button -->
@@ -46,7 +47,7 @@
     <!-- Footer Corner Meta Text -->
     <div style="position:absolute; bottom:24px; right:32px; z-index:10; pointer-events:none;">
         <p class="footer-meta-text">
-            Exasol-backed audit trail
+            Deterministic scoring, grounded answers
         </p>
     </div>
 
@@ -345,7 +346,7 @@
 
 <!-- INVOICE MODAL -->
 <div id="invoice-modal" class="modal-overlay">
-  <div class="modal-window">
+  <div class="modal-window" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-header">
       <h2 id="modal-title">INVOICE DETAIL</h2>
       <button id="modal-close" class="modal-close-btn" aria-label="Close invoice details modal" title="Close modal">&times;</button>
@@ -356,7 +357,7 @@
 
 <!-- ENTITY MODAL -->
 <div id="entity-modal" class="modal-overlay">
-  <div class="modal-window entity-window">
+  <div class="modal-window entity-window" role="dialog" aria-modal="true" aria-labelledby="entity-modal-title">
     <div class="modal-header">
       <h2 id="entity-modal-title">ENTITY DETAIL</h2>
       <button id="entity-modal-close" class="modal-close-btn" aria-label="Close entity details modal" title="Close modal">&times;</button>
@@ -367,9 +368,9 @@
 
 <!-- ADD INVOICE MODAL -->
 <div id="add-invoice-modal" class="modal-overlay">
-  <div class="modal-window add-invoice-window">
+  <div class="modal-window add-invoice-window" role="dialog" aria-modal="true" aria-labelledby="add-invoice-title">
     <div class="modal-header">
-      <h2>ADD INVESTIGATOR INVOICE</h2>
+      <h2 id="add-invoice-title">ADD INVESTIGATOR INVOICE</h2>
       <button id="add-invoice-close" class="modal-close-btn" aria-label="Close add invoice modal" title="Close modal">&times;</button>
     </div>
     <div class="modal-body form-body">
@@ -430,7 +431,7 @@
 </div>
 
 <!-- RESCORE BANNER — shown when API server is live and investigator invoices are present -->
-<div id="rescore-banner"></div>
+<div id="rescore-banner" role="status" aria-live="polite"></div>
 
 <!-- TOUR OVERLAY (B2) — pointer-events managed by JS; spotlight uses box-shadow mask -->
 <div id="tour-overlay" class="hidden">
@@ -448,7 +449,8 @@
 </div>
 
 <script src="/demo/data.js?v=1788330000"></script>
-<script src="/demo/app.js?v=1789306200"></script>
+<script src="/demo/app.js?v=1789306203"></script>
+<script src="/demo/assistant.js?v=1"></script>
 <script src="/demo/constellation.js?v=1788330000"></script>
 <!-- Local-only: real Exasol audit trail via server.py's /api/audit. See exasol/README.md. -->
 <script src="/demo/audit-trail.js?v=1"></script>

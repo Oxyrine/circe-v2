@@ -3,6 +3,13 @@
 
   var SIGNALS = ["value", "product", "timing", "externality"];
 
+  // Default mirrors scoring.scoring.FLAG_THRESHOLD; the analyst's context (assistant.js) can override it.
+  var DEFAULT_FLAG_THRESHOLD = 0.70;
+  function flagThreshold() {
+    var t = window.CirceAssist && window.CirceAssist.threshold();
+    return typeof t === "number" ? t : DEFAULT_FLAG_THRESHOLD;
+  }
+
   // Mutable data store to prevent const shadowing issues with live rescoring
   var CirceStore = {
     getScored: function() {
@@ -16,6 +23,11 @@
     }
   };
   window.CirceStore = CirceStore;
+  window.circeRender = function () {
+    var root = document.getElementById("queue");
+    if (root) root.innerHTML = "";
+    render();
+  };
 
 // --- PHASE 6 ADDITIONS ---
 window.INVESTIGATOR_INVOICES = {};
@@ -501,7 +513,7 @@ window.removeInvestigatorInvoice = function(id) {
                           "<div class='sig-val abstained mono'>ABSTAINED</div>";
     } else {
       var pct = Math.max(0, Math.min(100, Math.round(score * 100)));
-      var isRisk = (score >= 0.70);
+      var isRisk = (score >= flagThreshold());
       var barClass = isRisk ? "sig-bar-fill risk" : "sig-bar-fill";
       var valClass = isRisk ? "sig-val risk mono num" : "sig-val mono num";
       wrapper.innerHTML = "<div class='sig-name'>" + sig.toUpperCase() + "</div>" +
@@ -530,7 +542,7 @@ window.removeInvestigatorInvoice = function(id) {
     var expLoss = (typeof ring.expected_loss === "number" ? ring.expected_loss : (ring.expected_loss_inr || 0));
 
     var score = (ring.aggregate || ring.aggregate_score || 0);
-    var statusPill = score >= 0.70
+    var statusPill = score >= flagThreshold()
       ? "<span class='status-pill risk'>FLAGGED FRAUD</span>"
       : "<span class='status-pill benign'>BENIGN LOOP</span>";
 
@@ -712,6 +724,8 @@ window.removeInvestigatorInvoice = function(id) {
 
     var narrativeContainer = document.createElement("div");
     narrativeContainer.className = "trail-container hidden";
+    narrativeContainer.setAttribute("role", "status");
+    narrativeContainer.setAttribute("aria-live", "polite");
     narrativeContainer.style.padding = "0 16px 16px 16px";
     body.appendChild(narrativeContainer);
 
@@ -806,6 +820,8 @@ window.removeInvestigatorInvoice = function(id) {
       });
     });
 
+    if (window.CirceAssist) window.CirceAssist.decorateCard(body, ring);
+
     card.appendChild(body);
 
     // Toggle handler — persists open state per ring in localStorage
@@ -836,8 +852,8 @@ window.removeInvestigatorInvoice = function(id) {
   function buildStatsBar(rings) {
     var scoredData = CirceStore.getScored();
     var totalCandidates = (scoredData && scoredData.total_candidate_count) ? scoredData.total_candidate_count : 5542;
-    var highRiskRings = rings.filter(function(r) { return (r.aggregate || r.aggregate_score || 0) >= 0.70; });
-    var clearedRings = rings.filter(function(r) { return (r.aggregate || r.aggregate_score || 0) < 0.70; });
+    var highRiskRings = rings.filter(function(r) { return (r.aggregate || r.aggregate_score || 0) >= flagThreshold(); });
+    var clearedRings = rings.filter(function(r) { return (r.aggregate || r.aggregate_score || 0) < flagThreshold(); });
     
     var flaggedCount = highRiskRings.length;
     var flaggedLoss = highRiskRings.reduce(function(sum, r) { return sum + (r.expected_loss || 0); }, 0);
@@ -889,8 +905,18 @@ window.removeInvestigatorInvoice = function(id) {
 
     var backdrop = typeof BACKDROP !== "undefined" ? BACKDROP : null;
     
-    var flaggedRings = rings.filter(function(r) { return (r.aggregate || r.aggregate_score || 0) >= 0.70; });
-    var clearedRings = rings.filter(function(r) { return (r.aggregate || r.aggregate_score || 0) < 0.70; });
+    var flaggedRings = rings.filter(function(r) { return (r.aggregate || r.aggregate_score || 0) >= flagThreshold(); });
+    var clearedRings = rings.filter(function(r) { return (r.aggregate || r.aggregate_score || 0) < flagThreshold(); });
+
+    // Analyst context: order flagged rings by the server's deterministic ranking (escalate first).
+    // Rings the server has not ranked (e.g. added by live rescore) keep the exposure order after them.
+    var rk = window.CirceAssist && window.CirceAssist.ranking();
+    if (rk) {
+      flaggedRings = flaggedRings.slice().sort(function(a, b) {
+        var ra = rk[a.ring_id] ? rk[a.ring_id].rank : 1e9, rb = rk[b.ring_id] ? rk[b.ring_id].rank : 1e9;
+        return ra - rb || (b.expected_loss || 0) - (a.expected_loss || 0);
+      });
+    }
 
     // Render flagged rings first (5 rings)
     flaggedRings.forEach(function(ring, i) {
@@ -1829,27 +1855,61 @@ window.removeInvestigatorInvoice = function(id) {
     }
   };
 
+  var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
   function openModal(id) {
     var m = document.getElementById(id);
     if (!m) return;
+    m._returnFocus = document.activeElement;
     m.classList.remove("hidden");
     m.classList.add("open");
+    // Move focus into the dialog so keyboard and screen-reader users land in it
+    // The overlay fades in (visibility transition), so retry briefly until focus sticks.
+    var tries = 0;
+    (function focusIn() {
+      var first = m.querySelector(".modal-close-btn") || m.querySelector(FOCUSABLE);
+      if (first) first.focus();
+      if (!m.contains(document.activeElement) && m.classList.contains("open") && ++tries < 8) {
+        setTimeout(focusIn, 40);
+      }
+    })();
   }
   window.openModal = openModal;
+
+  function restoreFocus(m) {
+    var back = m._returnFocus;
+    m._returnFocus = null;
+    if (back && document.contains(back) && back.focus) back.focus();
+  }
 
   function closeModal(id) {
     var m = document.getElementById(id);
     if (!m) return;
     m.classList.remove("open");
+    restoreFocus(m);
   }
   window.closeModal = closeModal;
 
   function closeAllModals() {
     var modals = document.querySelectorAll(".modal-overlay");
     modals.forEach(function(m) {
+      var wasOpen = m.classList.contains("open");
       m.classList.remove("open");
+      if (wasOpen) restoreFocus(m);
     });
   }
+  // Keep Tab inside the open dialog (WCAG 2.1.2 / dialog pattern)
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Tab") return;
+    var open = document.querySelector(".modal-overlay.open");
+    if (!open) return;
+    var items = Array.prototype.filter.call(open.querySelectorAll(FOCUSABLE), function (n) { return n.offsetParent !== null; });
+    if (!items.length) return;
+    var first = items[0], last = items[items.length - 1];
+    if (!open.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+    else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
   window.closeAllModals = closeAllModals;
 
   var invClose = document.getElementById("modal-close");
@@ -1883,7 +1943,7 @@ window.removeInvestigatorInvoice = function(id) {
   // Close modals when clicking the backdrop
   document.addEventListener("click", function(e) {
     if (e.target && e.target.classList && e.target.classList.contains("modal-overlay")) {
-      e.target.classList.remove("open");
+      closeModal(e.target.id);
     }
   });
 
@@ -2944,7 +3004,7 @@ window.removeInvestigatorInvoice = function(id) {
           var eCount = Object.keys(ENTITIES).length;
           var iCount = Object.keys(INVOICES).length + investigatorInvoices.length;
           var totLoops = data.total_candidate_count || 5542;
-          var flaggedCount = data.high_risk_count || (data.rings ? data.rings.filter(function(r) { return (r.aggregate || r.aggregate_score || 0) >= 0.70; }).length : 5);
+          var flaggedCount = data.high_risk_count || (data.rings ? data.rings.filter(function(r) { return (r.aggregate || r.aggregate_score || 0) >= flagThreshold(); }).length : 5);
           globalStats.innerHTML = 
             "<div class='global-stat'><span class='gs-val mono num'>" + eCount + "</span><span class='gs-label'>ENTITIES</span></div>" +
             "<div class='gs-divider'></div>" +
@@ -2962,8 +3022,7 @@ window.removeInvestigatorInvoice = function(id) {
         }
         if (btn) { btn.disabled = false; btn.innerHTML = "RE-RUN DETECTION"; }
         // Close modal
-        var modal = document.getElementById("add-invoice-modal");
-        if (modal) modal.classList.remove("open");
+        window.closeModal("add-invoice-modal");
       })
       .catch(function(err) {
         if (btn) { btn.disabled = false; btn.innerHTML = "RE-RUN DETECTION"; }
