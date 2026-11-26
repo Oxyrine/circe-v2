@@ -108,3 +108,12 @@ def test_narrative_prompt_is_redacted(monkeypatch):
     monkeypatch.setattr(provider, "call_groq_api", lambda p, k, system="": seen.setdefault("p", p))
     provider.generate_narrative({**RING, "entities": [eid], "evidence": {"x": f"{ent['name']} PAN ABCDE1234F"}})
     assert ent["name"] not in seen["p"] and "ABCDE1234F" not in seen["p"]
+
+
+@pytest.mark.parametrize("call,reply", [
+    (provider.call_gemini_api, {"candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": [{"text": "half"}]}}]}),
+    (provider.call_groq_api, {"choices": [{"finish_reason": "length", "message": {"content": "half"}}]}),
+])
+def test_truncated_answer_is_discarded(monkeypatch, call, reply):
+    monkeypatch.setattr(provider.urllib.request, "urlopen", lambda req, timeout=0: _Resp(json.dumps(reply).encode()))
+    assert call("p", "k") == ""

@@ -72,6 +72,12 @@ def test_facts_contain_no_entity_names(flagged):
     assert not any(e["name"] in blob or e["address"] in blob for e in ents.values())
 
 
+def test_facts_explain_the_jargon(flagged):
+    from pipeline.service import entities_map
+    facts = assistant.build_facts(flagged, entities_map(), CTX)
+    assert "invoice" in facts["closure_meaning"] and "externality" in facts["signal_meanings"]
+
+
 def test_llm_answer_used_when_valid(monkeypatch, flagged):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setattr(provider, "call_gemini_api", lambda p, k, system="": "It is flagged on timing and flow.")

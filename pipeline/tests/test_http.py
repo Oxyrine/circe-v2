@@ -127,3 +127,26 @@ def test_rescore_still_works(port):
     s, _, res = jcall(port, "/api/rescore", {"investigator_invoices": []})
     assert s == 200 and res["rings"]
     assert jcall(port, "/api/rescore", {"investigator_invoices": "bad"})[0] == 400
+
+
+@pytest.mark.parametrize("path", ["/.env.example", "/%2eenv.example", "/demo/../.env.example", "/.git/config", "/.gitignore"])
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_dotfiles_are_never_served(port, method, path):
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    c.request(method, path)
+    assert c.getresponse().status == 404
+
+
+def test_load_env_tolerates_spaces_and_keeps_real_env(tmp_path, monkeypatch):
+    f = tmp_path / ".env"
+    f.write_text("""# c
+CIRCE_A = one
+CIRCE_B= "two"
+CIRCE_C=file
+""", encoding="utf-8")
+    monkeypatch.setenv("CIRCE_C", "real")
+    for k in ("CIRCE_A", "CIRCE_B"):
+        monkeypatch.setenv(k, "")
+        monkeypatch.delenv(k)
+    server.load_env(f)
+    assert [server.os.environ[k] for k in ("CIRCE_A", "CIRCE_B", "CIRCE_C")] == ["one", "two", "real"]

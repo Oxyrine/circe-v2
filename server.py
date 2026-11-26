@@ -81,6 +81,15 @@ class OuroborosHandler(http.server.SimpleHTTPRequestHandler):
 
     adds_security_headers = True  # end_headers() below covers static files and JSON alike
 
+    def send_head(self):  # every static GET and HEAD goes through here
+        # The server roots at the repo, so never serve dotfiles (.env, .git).
+        # realpath undoes encoding tricks and Windows short names first.
+        rel = os.path.relpath(os.path.realpath(self.translate_path(self.path)), os.path.realpath(self.directory))
+        if any(part.startswith(".") and part != "." for part in Path(rel).parts):
+            self.send_error(404)
+            return None
+        return super().send_head()
+
     def end_headers(self):
         for k, v in SECURITY_HEADERS.items():
             self.send_header(k, v)
@@ -211,6 +220,16 @@ class OuroborosHandler(http.server.SimpleHTTPRequestHandler):
         super().log_message(fmt, *args)
 
 
+def load_env(path=Path(__file__).resolve().parent / ".env"):
+    """Read KEY=value lines from a local .env. Real environment variables win."""
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and not key.lstrip().startswith("#"):
+            os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
 # Top-level exports for Vercel Serverless Python runtime
 handler = OuroborosHandler
 app = handler
@@ -218,6 +237,7 @@ application = handler
 
 
 if __name__ == '__main__':
+    load_env()
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     try:
         DualStackHTTPServer.address_family = socket.AF_INET6

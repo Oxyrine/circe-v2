@@ -50,6 +50,9 @@ def build_facts(ring, entities, ctx):
         "your_threshold": ctx["risk_threshold"],
         "expected_loss_inr": ring.get("expected_loss"),
         "closure_type": ring.get("closure_type"),
+        # Spell out the jargon, or the model guesses what it means.
+        "closure_meaning": _closure({"closure_type": ring.get("closure_type")}),
+        "signal_meanings": SIGNAL_LABELS,
         "entity_count": len(ring.get("entities", [])),
         "sectors": sorted(ring_sectors(ring, entities)),
         "scores": ring.get("scores", {}),

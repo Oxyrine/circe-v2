@@ -69,7 +69,8 @@ def build_fallback_narrative(ring: dict) -> str:
     return "\n".join(lines)
 
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+# 2.5-flash is closed to new users; this one answers well inside the 10s timeout.
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 
 
 def call_gemini_api(prompt: str, api_key: str, system: str = "") -> str:
@@ -82,8 +83,11 @@ def call_gemini_api(prompt: str, api_key: str, system: str = "") -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 600},
+        # Reasoning tokens count against this cap on Gemini 3 models.
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1500},
     }
+    if model.startswith("gemini-3"):
+        payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
     if system:
         payload["systemInstruction"] = {"parts": [{"text": system}]}
     data = json.dumps(payload).encode("utf-8")
@@ -96,7 +100,7 @@ def call_gemini_api(prompt: str, api_key: str, system: str = "") -> str:
     with urllib.request.urlopen(req, timeout=10) as resp:
         res = json.loads(resp.read().decode("utf-8"))
         candidates = res.get("candidates", [])
-        if candidates:
+        if candidates and candidates[0].get("finishReason") != "MAX_TOKENS":  # never show a cut-off answer
             parts = candidates[0].get("content", {}).get("parts", [])
             if parts:
                 return parts[0].get("text", "").strip()
@@ -113,7 +117,7 @@ def call_groq_api(prompt: str, api_key: str, system: str = "") -> str:
     messages = [{"role": "system", "content": system}] if system else []
     messages.append({"role": "user", "content": prompt})
     # Reasoning tokens count against this cap, so it is higher than Gemini's.
-    payload = {"model": model, "messages": messages, "temperature": 0.2, "max_completion_tokens": 1200}
+    payload = {"model": model, "messages": messages, "temperature": 0.2, "max_completion_tokens": 2000}
     if model.startswith("openai/gpt-oss"):
         payload["reasoning_effort"] = "low"
     req = urllib.request.Request(
@@ -126,6 +130,8 @@ def call_groq_api(prompt: str, api_key: str, system: str = "") -> str:
     with urllib.request.urlopen(req, timeout=10) as resp:
         res = json.loads(resp.read().decode("utf-8"))
         choices = res.get("choices") or [{}]
+        if choices[0].get("finish_reason") == "length":  # never show a cut-off answer
+            return ""
         return (choices[0].get("message", {}).get("content") or "").strip()
 
 
@@ -200,7 +206,11 @@ def generate_narrative(ring: dict, actor="investigator") -> dict:
         "You are an AI Forensic Auditor for an institutional invoice discounting platform (TReDS). "
         "Your role is strictly explanatory: analyze the provided mathematical scoring signals and corporate metadata, "
         "and produce a concise, professional compliance memo summarizing why this ring was flagged or cleared. "
-        "Do NOT invent facts; ground every statement in the provided scores, evidence, and closure mechanism."
+        "Do NOT invent facts; ground every statement in the provided scores, evidence, and closure mechanism. "
+        "Signal meanings: value = little net value is retained around the loop; product = HS codes stay consistent "
+        "around the loop; timing = regularity of the round trip; externality = how much trade stays inside the ring. "
+        "Do not add dates, author or recipient lines, historical comparisons, allegations of intent or collusion, "
+        "or any action taken or recommended. Write plain text with no Markdown, under 250 words."
     )
     # Imported here because pipeline.service pulls in the data layer.
     from pipeline.service import entities_map

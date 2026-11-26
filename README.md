@@ -29,10 +29,12 @@ pip install -r requirements.txt          # jsonschema + pytest only
 python server.py 8000                    # then open http://localhost:8000/demo/
 ```
 
-Optional: `GEMINI_API_KEY=...` enables LLM answers (model via `GEMINI_MODEL`, default `gemini-2.5-flash`). `GROQ_API_KEY=...` adds the Groq fallback, or works on its own (`GROQ_MODEL`, default `openai/gpt-oss-120b`). Without either key everything still works with deterministic answers. Exasol is optional and not needed to run the app.
+For local keys, copy `.env.example` to `.env`; `server.py` reads it, and it is never committed or served.
+
+Optional: `GEMINI_API_KEY=...` enables LLM answers (model via `GEMINI_MODEL`, default `gemini-3.5-flash-lite`). `GROQ_API_KEY=...` adds the Groq fallback, or works on its own (`GROQ_MODEL`, default `openai/gpt-oss-120b`). Without either key everything still works with deterministic answers. Exasol is optional and not needed to run the app.
 
 ```bash
-python -m pytest -q                      # 146 tests (one needs a live Exasol and is skipped without it)
+python -m pytest -q                      # 161 tests (one needs a live Exasol and is skipped without it)
 python -m pipeline.build_base_rings      # regenerate pipeline/base_rings.json after changing data/
 ```
 
