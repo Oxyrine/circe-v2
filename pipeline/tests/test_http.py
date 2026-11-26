@@ -28,6 +28,7 @@ def port():
 @pytest.fixture(autouse=True)
 def clean(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     http_common.LLM_LIMITER._hits.clear()
 
 

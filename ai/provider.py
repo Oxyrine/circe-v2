@@ -11,13 +11,14 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from ai import guard
 from exasol.connection import connect, is_exasol_available
 from scoring.scoring import FLAG_THRESHOLD
 
 
 def is_ai_available() -> bool:
     """Returns True if an LLM API key is present in environment."""
-    return bool(os.environ.get("GEMINI_API_KEY"))
+    return bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GROQ_API_KEY"))
 
 
 def build_fallback_narrative(ring: dict) -> str:
@@ -102,6 +103,47 @@ def call_gemini_api(prompt: str, api_key: str, system: str = "") -> str:
     return ""
 
 
+# llama-3.3-70b-versatile was shut down on 2026-08-16; this is Groq's replacement.
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
+
+
+def call_groq_api(prompt: str, api_key: str, system: str = "") -> str:
+    """Groq's OpenAI-compatible chat endpoint, stdlib only. Model: GROQ_MODEL."""
+    model = os.environ.get("GROQ_MODEL", DEFAULT_GROQ_MODEL)
+    messages = [{"role": "system", "content": system}] if system else []
+    messages.append({"role": "user", "content": prompt})
+    # Reasoning tokens count against this cap, so it is higher than Gemini's.
+    payload = {"model": model, "messages": messages, "temperature": 0.2, "max_completion_tokens": 1200}
+    if model.startswith("openai/gpt-oss"):
+        payload["reasoning_effort"] = "low"
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        # Groq's CDN rejects the default "Python-urllib" agent with a 403.
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}", "User-Agent": "circe/2"},
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        res = json.loads(resp.read().decode("utf-8"))
+        choices = res.get("choices") or [{}]
+        return (choices[0].get("message", {}).get("content") or "").strip()
+
+
+def call_llm(prompt: str, system: str = "", ok=bool) -> str:
+    """Gemini first, then Groq. Returns the first answer that passes `ok`, else ""."""
+    for key_var, call in (("GEMINI_API_KEY", call_gemini_api), ("GROQ_API_KEY", call_groq_api)):
+        key = os.environ.get(key_var)
+        if not key:
+            continue
+        try:
+            text = call(prompt, key, system=system)
+            if text and ok(text):
+                return text
+        except Exception as e:  # log the type only; messages can carry request details
+            print(f"LLM call using {key_var} failed ({type(e).__name__})")
+    return ""
+
+
 def log_ai_action_to_exasol(ring_id: str, note: str, aggregate_val: float, closure_type: str, actor="ai_governance"):
     """Persists generated narrative actions to CIRCE_AUDIT_LOG."""
     if not is_exasol_available():
@@ -143,9 +185,7 @@ def generate_narrative(ring: dict, actor="investigator") -> dict:
     closure_type = ring.get("closure_type", "transaction")
     exp_loss = int(ring.get("expected_loss", 0))
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-
-    if not api_key:
+    if not is_ai_available():
         narrative = build_fallback_narrative(ring)
         log_ai_action_to_exasol(ring_id, narrative, agg, closure_type, actor=actor)
         return {
@@ -162,6 +202,10 @@ def generate_narrative(ring: dict, actor="investigator") -> dict:
         "and produce a concise, professional compliance memo summarizing why this ring was flagged or cleared. "
         "Do NOT invent facts; ground every statement in the provided scores, evidence, and closure mechanism."
     )
+    # Imported here because pipeline.service pulls in the data layer.
+    from pipeline.service import entities_map
+    names = guard.names_from_entities(entities_map(), set(ring.get("entities", [])))
+    evidence = {k: guard.redact(v, names) for k, v in (ring.get("evidence") or {}).items()}
     user_prompt = (
         f"RING METRICS:\n"
         f"- Ring ID: {ring_id}\n"
@@ -170,31 +214,25 @@ def generate_narrative(ring: dict, actor="investigator") -> dict:
         f"- Expected Loss: INR {exp_loss:,}\n"
         f"- Component Scores: {json.dumps(ring.get('scores', {}))}\n"
         f"- Abstained Signals: {json.dumps(ring.get('abstained', []))}\n"
-        f"- Raw Evidence Strings: {json.dumps(ring.get('evidence', {}))}\n\n"
+        f"- Raw Evidence Strings: {json.dumps(evidence)}\n\n"
         f"Produce a structured compliance-ready narrative."
     )
 
-    try:
-        narrative = call_gemini_api(user_prompt, api_key, system=system_prompt)
-        if not narrative:
-            narrative = build_fallback_narrative(ring)
-        log_ai_action_to_exasol(ring_id, narrative, agg, closure_type, actor=actor)
-        return {
-            "ring_id": ring_id,
-            "status": "llm_generated",
-            "ai_available": True,
-            "narrative": narrative,
-            "governance_note": "Generated via LLM evidence synthesis. Model decides, LLM explains.",
-        }
-    except Exception as e:
-        # Log server-side only; the message can carry request details.
-        print(f"generate_narrative: LLM call failed ({type(e).__name__})")
-        fallback = build_fallback_narrative(ring)
+    narrative = call_llm(user_prompt, system=system_prompt)
+    if not narrative:
         return {
             "ring_id": ring_id,
             "status": "llm_error_fallback",
             "ai_available": False,
             "error": "llm_unavailable",
-            "narrative": fallback,
+            "narrative": build_fallback_narrative(ring),
             "governance_note": "Generated via deterministic evidence engine fallback.",
         }
+    log_ai_action_to_exasol(ring_id, narrative, agg, closure_type, actor=actor)
+    return {
+        "ring_id": ring_id,
+        "status": "llm_generated",
+        "ai_available": True,
+        "narrative": narrative,
+        "governance_note": "Generated via LLM evidence synthesis. Model decides, LLM explains.",
+    }

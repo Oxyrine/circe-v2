@@ -11,9 +11,9 @@ Circe finds circular-trading fraud in invoice data, scores every loop with trans
 |---|---|---|
 | Find loops, score four signals, abstain on missing data | Deterministic Python (`graph/`, `scoring/`) | Reproducible, auditable, no hallucination |
 | Rank the queue from **your** context (threshold, exposure limit, sectors, daily capacity) | Deterministic Python (`pipeline/prioritise.py`) | The decision is code; every placement carries a reason |
-| Explain a ring, answer your questions | LLM (Gemini) on a fact sheet, with a deterministic fallback (`ai/assistant.py`) | Plain language, but it cannot change a score or a decision |
+| Explain a ring, answer your questions | LLM (Gemini, then Groq) on a fact sheet, with a deterministic fallback (`ai/assistant.py`) | Plain language, but it cannot change a score or a decision |
 
-If there is no API key, the LLM is down, or its answer contradicts the deterministic classification or names another ring, the assistant returns a deterministic answer built from the same facts.
+Gemini is tried first. If it has no key, fails, or its answer fails the checks, Groq is tried. If there is no API key, both are down, or each answer contradicts the deterministic classification or names another ring, the assistant returns a deterministic answer built from the same facts.
 
 ## Safety by design
 
@@ -29,14 +29,14 @@ pip install -r requirements.txt          # jsonschema + pytest only
 python server.py 8000                    # then open http://localhost:8000/demo/
 ```
 
-Optional: `GEMINI_API_KEY=...` enables LLM answers (model via `GEMINI_MODEL`, default `gemini-2.5-flash`). Without it everything still works with deterministic answers. Exasol is optional and not needed to run the app.
+Optional: `GEMINI_API_KEY=...` enables LLM answers (model via `GEMINI_MODEL`, default `gemini-2.5-flash`). `GROQ_API_KEY=...` adds the Groq fallback, or works on its own (`GROQ_MODEL`, default `openai/gpt-oss-120b`). Without either key everything still works with deterministic answers. Exasol is optional and not needed to run the app.
 
 ```bash
-python -m pytest -q                      # 140 tests (one needs a live Exasol and is skipped without it)
+python -m pytest -q                      # 146 tests (one needs a live Exasol and is skipped without it)
 python -m pipeline.build_base_rings      # regenerate pipeline/base_rings.json after changing data/
 ```
 
-Deploys to Vercel as-is (`vercel.json`); set `GEMINI_API_KEY` as an environment variable there. It is never committed.
+Deploys to Vercel as-is (`vercel.json`); set `GEMINI_API_KEY` and/or `GROQ_API_KEY` as environment variables there. They are never committed.
 
 ## API
 
@@ -141,7 +141,7 @@ $$\text{Expected Loss} = \text{Aggregate Risk Score} \times \text{Gross Platform
 
 * **Governance Principle**: *"Our model decides, our LLM explains."* The LLM never enters the fraud decision path.
 * **Evidence Synthesis (`ai/provider.py`)**: Accepts deterministic mathematical scores and corporate metadata and synthesizes a formal financial intelligence memo.
-* **Graceful Degradation**: Operates via Gemini REST API using standard libraries; if no API key is present, the system cleanly returns a structured, deterministic explanation without crashing.
+* **Graceful Degradation**: Operates via the Gemini REST API, with Groq as fallback, using standard libraries; if no API key is present, the system cleanly returns a structured, deterministic explanation without crashing.
 * **Observability Log**: Every AI narrative generated is recorded in Exasol's `CIRCE_AUDIT_LOG`.
 
 ---

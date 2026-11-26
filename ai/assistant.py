@@ -16,7 +16,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from ai import guard
-from ai.provider import call_gemini_api
+from ai.provider import call_llm
 from pipeline.prioritise import format_inr, prioritise, ring_sectors
 from pipeline.service import entities_map, get_ring, get_rings
 from scoring.scoring import FLAG_THRESHOLD
@@ -152,19 +152,14 @@ def answer(ring_id, question, ctx, history=None):
         if v.ok:
             prior.append(v.text)
 
-    key = os.environ.get("GEMINI_API_KEY")
-    if key:
-        prompt = (
-            f"FACTS:\n{json.dumps(facts, ensure_ascii=False)}\n\n"
-            + (f"EARLIER QUESTIONS: {json.dumps(prior)}\n\n" if prior else "")
-            + f"<question>{verdict.text}</question>"
-        )
-        try:
-            text = call_gemini_api(prompt, key, system=SYSTEM_PROMPT)
-            if answer_ok(text, facts):
-                return 200, {"answer": text, "source": "llm", "grounded_on": ["facts"], "ring_id": ring_id}
-        except Exception as e:  # never surface request details
-            print(f"assistant: LLM call failed ({type(e).__name__})")
+    prompt = (
+        f"FACTS:\n{json.dumps(facts, ensure_ascii=False)}\n\n"
+        + (f"EARLIER QUESTIONS: {json.dumps(prior)}\n\n" if prior else "")
+        + f"<question>{verdict.text}</question>"
+    )
+    text = call_llm(prompt, system=SYSTEM_PROMPT, ok=lambda t: answer_ok(t, facts))
+    if text:
+        return 200, {"answer": text, "source": "llm", "grounded_on": ["facts"], "ring_id": ring_id}
 
     text, grounded = fallback_answer(facts, verdict.text)
     return 200, {"answer": text, "source": "deterministic", "grounded_on": grounded, "ring_id": ring_id}

@@ -5,7 +5,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from ai import assistant  # noqa: E402
+from ai import assistant, provider  # noqa: E402
 from pipeline.prioritise import DEFAULT_CONTEXT  # noqa: E402
 from pipeline.service import get_rings  # noqa: E402
 
@@ -25,6 +25,7 @@ def corporate():
 @pytest.fixture(autouse=True)
 def no_key(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
 
 def ask(ring_id, q, ctx=CTX):
@@ -73,7 +74,7 @@ def test_facts_contain_no_entity_names(flagged):
 
 def test_llm_answer_used_when_valid(monkeypatch, flagged):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
-    monkeypatch.setattr(assistant, "call_gemini_api", lambda p, k, system="": "It is flagged on timing and flow.")
+    monkeypatch.setattr(provider, "call_gemini_api", lambda p, k, system="": "It is flagged on timing and flow.")
     res = ask(flagged["ring_id"], "why?")[1]
     assert res["source"] == "llm"
 
@@ -85,7 +86,7 @@ def test_llm_answer_used_when_valid(monkeypatch, flagged):
 ])
 def test_bad_llm_output_falls_back(monkeypatch, flagged, bad):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
-    monkeypatch.setattr(assistant, "call_gemini_api", lambda p, k, system="": bad)
+    monkeypatch.setattr(provider, "call_gemini_api", lambda p, k, system="": bad)
     assert ask(flagged["ring_id"], "why?")[1]["source"] == "deterministic"
 
 
@@ -95,7 +96,7 @@ def test_llm_error_falls_back_without_leaking(monkeypatch, flagged):
     def boom(*a, **k):
         raise RuntimeError("url had key=SECRET")
 
-    monkeypatch.setattr(assistant, "call_gemini_api", boom)
+    monkeypatch.setattr(provider, "call_gemini_api", boom)
     s, res = ask(flagged["ring_id"], "why?")
     assert s == 200 and res["source"] == "deterministic" and "SECRET" not in str(res)
 
@@ -108,7 +109,7 @@ def test_prompt_wraps_question_and_redacts(monkeypatch, flagged):
         seen["p"], seen["s"] = prompt, system
         return "flagged"
 
-    monkeypatch.setattr(assistant, "call_gemini_api", spy)
+    monkeypatch.setattr(provider, "call_gemini_api", spy)
     ask(flagged["ring_id"], "is ABCDE1234F involved?")
     assert "<question>" in seen["p"] and "ABCDE1234F" not in seen["p"]
     assert "untrusted" in seen["s"]
